@@ -24,6 +24,14 @@ public class AgentChatRequest {
     private String userId;
     private String message;
     private List<Map<String, Object>> history;
+    /**
+     * 上一轮任务意图，供短句「近7天」继承筛爆品/质检。
+     */
+    private String lastIntent;
+    /**
+     * 上一轮任务入参。
+     */
+    private Map<String, Object> lastTaskInput;
     private String activeTaskId;
     private boolean queueMessage;
 }

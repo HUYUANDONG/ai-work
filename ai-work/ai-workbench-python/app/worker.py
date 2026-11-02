@@ -15,7 +15,7 @@ from harness.runtime import AppRuntime
 from harness.task_control import TaskAborted
 from tools.tasks import claim_task, complete_task, fail_task, heartbeat_task
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 async def poll_once(runtime: AppRuntime) -> dict[str, Any] | None:
@@ -97,24 +97,36 @@ async def execute_claimed(runtime: AppRuntime, task: dict[str, Any]) -> dict[str
         raise
 
 
-async def run_worker_loop() -> None:
-    """Worker 主循环。"""
-    settings = get_settings()
-    runtime = AppRuntime.create(settings)
+async def run_worker_loop(*, runtime: AppRuntime | None = None) -> None:
+    """
+    Worker 主循环。
 
-    if settings.checkpoint_database_url:
-        init_db(settings)
+    Args:
+        runtime: 可选共享运行时；空则本进程自建。
+    """
+    own_runtime = runtime is None
+    settings = runtime.settings if runtime is not None else get_settings()
+    if runtime is None:
+        runtime = AppRuntime.create(settings)
+        if settings.checkpoint_database_url:
+            init_db(settings)
 
     logger.info(
-        "worker started profile=%s poll=%ss mock_java=%s",
+        "worker started profile=%s poll=%ss mock_java=%s java=%s",
         settings.profile,
         settings.worker_poll_interval_seconds,
         settings.java_mock_features,
+        settings.java_base_url,
     )
 
     try:
         while True:
-            task = await poll_once(runtime)
+            try:
+                task = await poll_once(runtime)
+            except Exception:
+                logger.exception("claim_task failed")
+                await asyncio.sleep(settings.worker_poll_interval_seconds)
+                continue
             if task is None:
                 await asyncio.sleep(settings.worker_poll_interval_seconds)
                 continue
@@ -123,7 +135,8 @@ async def run_worker_loop() -> None:
             except Exception:
                 continue
     finally:
-        await close_db()
+        if own_runtime:
+            await close_db()
 
 
 def main() -> None:

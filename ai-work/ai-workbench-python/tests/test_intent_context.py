@@ -21,6 +21,7 @@ from agents.chat.intent import (
     parse_time_window_days,
     resolve_time_window_days,
 )
+from schemas.chat import ChatRequest
 
 
 class IntentContextTest(unittest.TestCase):
@@ -57,6 +58,32 @@ class IntentContextTest(unittest.TestCase):
         )
         self.assertEqual(merged["time_window_days"], 7)
         self.assertEqual(merged["goal_mode"], "GMV")
+
+    def test_chat_request_carries_context(self) -> None:
+        req = ChatRequest.model_validate(
+            {
+                "conversation_id": "c-1",
+                "user_id": "u-1",
+                "message": "近7天",
+                "last_intent": "EXPLOSION",
+                "last_task_input": {"time_window_days": 30, "goal_mode": "GMV"},
+                "history": [
+                    {"role": "user", "content": "筛爆品"},
+                    {
+                        "role": "assistant",
+                        "content": "已生成分析任务",
+                        "intent": "EXPLOSION",
+                    },
+                ],
+            }
+        )
+        self.assertEqual(req.last_intent, "EXPLOSION")
+        self.assertEqual(req.last_task_input["time_window_days"], 30)
+        self.assertEqual(infer_last_task_intent(req.history), "EXPLOSION")
+        self.assertEqual(
+            classify_message_rules(req.message, last_intent=req.last_intent),
+            "EXPLOSION",
+        )
 
     def test_infer_from_assistant(self) -> None:
         history = [

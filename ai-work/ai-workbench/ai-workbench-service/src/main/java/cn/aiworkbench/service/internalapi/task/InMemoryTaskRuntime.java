@@ -3,6 +3,7 @@ package cn.aiworkbench.service.internalapi.task;
 import cn.aiworkbench.service.internalapi.support.InternalApiException;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 内存任务运行时：领取、进度、心跳、完成/失败。正式版可换 DB/Redis。
@@ -22,9 +24,11 @@ public class InMemoryTaskRuntime {
 
     private final Deque<Map<String, Object>> queue = new ArrayDeque<>();
     private final Map<String, Map<String, Object>> leased = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Object>> finished = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> control = new ConcurrentHashMap<>();
     private final Map<String, List<Map<String, Object>>> progress = new ConcurrentHashMap<>();
     private final Map<String, List<Map<String, Object>>> messageQueue = new ConcurrentHashMap<>();
+    private final Object finishedLock = new Object();
 
     /**
      * 入队一条可领取任务（对话 need_task 或联调入队）。
@@ -119,10 +123,12 @@ public class InMemoryTaskRuntime {
     public void complete(String taskId, String leaseToken, Map<String, Object> body) {
         assertLease(taskId, leaseToken);
         Map<String, Object> task = leased.remove(taskId);
-        if (task != null) {
-            task.put("status", "COMPLETED");
-            task.put("complete_body", body);
-        }
+        Map<String, Object> done = task == null ? new LinkedHashMap<>() : new LinkedHashMap<>(task);
+        done.put("task_id", taskId);
+        done.put("status", "COMPLETED");
+        done.put("complete_body", body == null ? Map.of() : new LinkedHashMap<>(body));
+        finished.put(taskId, done);
+        signalFinished();
     }
 
     /**
@@ -135,10 +141,12 @@ public class InMemoryTaskRuntime {
     public void fail(String taskId, String leaseToken, Map<String, Object> body) {
         assertLease(taskId, leaseToken);
         Map<String, Object> task = leased.remove(taskId);
-        if (task != null) {
-            task.put("status", "FAILED");
-            task.put("fail_body", body);
-        }
+        Map<String, Object> done = task == null ? new LinkedHashMap<>() : new LinkedHashMap<>(task);
+        done.put("task_id", taskId);
+        done.put("status", "FAILED");
+        done.put("fail_body", body == null ? Map.of() : new LinkedHashMap<>(body));
+        finished.put(taskId, done);
+        signalFinished();
     }
 
     /**
@@ -187,6 +195,49 @@ public class InMemoryTaskRuntime {
     public Optional<Map<String, Object>> findLeased(String taskId) {
         Map<String, Object> task = leased.get(taskId);
         return task == null ? Optional.empty() : Optional.of(new LinkedHashMap<>(task));
+    }
+
+    /**
+     * 查找已完成/失败任务。
+     *
+     * @param taskId 任务 ID
+     * @return 终态任务
+     */
+    public Optional<Map<String, Object>> findFinished(String taskId) {
+        Map<String, Object> task = finished.get(taskId);
+        return task == null ? Optional.empty() : Optional.of(new LinkedHashMap<>(task));
+    }
+
+    /**
+     * 等待任务进入终态（完成或失败）。
+     *
+     * @param taskId  任务 ID
+     * @param timeout 最长等待
+     * @return 终态任务；超时为空
+     */
+    public Optional<Map<String, Object>> awaitFinished(String taskId, Duration timeout) {
+        long deadline = System.nanoTime() + Math.max(timeout.toNanos(), 0);
+        synchronized (finishedLock) {
+            while (!finished.containsKey(taskId)) {
+                long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (remainingMs <= 0) {
+                    return Optional.empty();
+                }
+                try {
+                    finishedLock.wait(Math.min(200L, remainingMs));
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return Optional.empty();
+                }
+            }
+            return Optional.of(new LinkedHashMap<>(finished.get(taskId)));
+        }
+    }
+
+    private void signalFinished() {
+        synchronized (finishedLock) {
+            finishedLock.notifyAll();
+        }
     }
 
     private Map<String, Object> assertLease(String taskId, String leaseToken) {

@@ -27,6 +27,8 @@ class ChatRequest(BaseModel):
         user_id: 电商用户 ID。
         message: 本轮用户原文。
         history: 可选最近若干轮。
+        last_intent: Java 记下的上一轮任务意图（EXPLOSION/QUALITY）。
+        last_task_input: 上一轮任务入参，供短句补参叠加。
         active_task_id: 若本会话有进行中的长任务，Java 带上以便排队/提示。
         queue_message: Java 已把本消息放入追问队列时为 true（Python 只回执，不建新任务）。
     """
@@ -35,6 +37,8 @@ class ChatRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1)
     history: list[dict[str, Any]] = Field(default_factory=list)
+    last_intent: str | None = None
+    last_task_input: dict[str, Any] | None = None
     active_task_id: str | None = None
     queue_message: bool = False
 

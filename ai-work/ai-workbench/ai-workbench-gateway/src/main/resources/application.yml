@@ -39,6 +39,13 @@ spring:
           metadata:
             response-timeout: ${wb.timeout.gateway-stream-idle}
             connect-timeout: 5000
+        - id: workbench-agent-chat
+          uri: ${wb.gateway.service-uri}
+          predicates:
+            - Path=/api/v1/agent/chat
+          metadata:
+            response-timeout: ${wb.timeout.gateway-chat}
+            connect-timeout: 5000
         - id: workbench-service
           uri: ${wb.gateway.service-uri}
           predicates:

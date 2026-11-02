@@ -40,16 +40,26 @@ class SessionMemory:
     """
 
     conversation_id: str
-    working: list[dict[str, str]] = field(default_factory=list)
+    working: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
     archives: list[dict[str, Any]] = field(default_factory=list)
     constraints: list[Constraint] = field(default_factory=list)
     last_intent: str | None = None
     last_task_input: dict[str, Any] = field(default_factory=dict)
 
-    def add_turn(self, role: str, content: str, *, keep_last: int = 12) -> None:
+    def add_turn(
+        self,
+        role: str,
+        content: str,
+        *,
+        intent: str | None = None,
+        keep_last: int = 12,
+    ) -> None:
         """追加一轮，超出 keep_last 的进入待压缩区（由 compact 处理）。"""
-        self.working.append({"role": role, "content": content})
+        item: dict[str, Any] = {"role": role, "content": content}
+        if intent:
+            item["intent"] = intent
+        self.working.append(item)
         # 软上限：留给 compact 决定
         if len(self.working) > keep_last * 2:
             self.working = self.working[-(keep_last * 2) :]

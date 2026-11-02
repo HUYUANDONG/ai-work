@@ -44,6 +44,11 @@ public class TimeoutBudgetProperties {
     private Duration gatewayDefault = Duration.ofSeconds(30);
 
     /**
+     * Gateway 对话路由超时（需覆盖 Worker 等待）。
+     */
+    private Duration gatewayChat = Duration.ofSeconds(120);
+
+    /**
      * Gateway 流式路由空闲超时。
      */
     private Duration gatewayStreamIdle = Duration.ofSeconds(120);
@@ -73,6 +78,13 @@ public class TimeoutBudgetProperties {
         }
         if (gatewayStreamIdle == null || gatewayStreamIdle.isNegative() || gatewayStreamIdle.isZero()) {
             errors.add("wb.timeout.gateway-stream-idle 必须为正");
+        }
+        if (gatewayChat == null || gatewayChat.isNegative() || gatewayChat.isZero()) {
+            errors.add("wb.timeout.gateway-chat 必须为正");
+        }
+        if (gatewayChat != null && gatewayDefault != null && gatewayChat.compareTo(gatewayDefault) < 0) {
+            errors.add("wb.timeout.gateway-chat(" + gatewayChat + ") 必须大于等于 wb.timeout.gateway-default("
+                    + gatewayDefault + ")");
         }
         if (!errors.isEmpty()) {
             throw new IllegalStateException("超时预算配置不合法: " + String.join("; ", errors));

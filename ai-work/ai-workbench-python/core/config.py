@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     hmac_secret_in: str = Field(default="", validation_alias="WB_HMAC_SECRET_IN")
     hmac_secret_out: str = Field(default="", validation_alias="WB_HMAC_SECRET_OUT")
     worker_poll_interval_seconds: int = Field(
-        default=20,
+        default=2,
         validation_alias="WB_WORKER_POLL_INTERVAL_SECONDS",
     )
     worker_lease_seconds: int = Field(default=60, validation_alias="WB_WORKER_LEASE_SECONDS")

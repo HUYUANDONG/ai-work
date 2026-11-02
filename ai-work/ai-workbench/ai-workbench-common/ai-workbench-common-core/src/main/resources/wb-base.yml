@@ -22,6 +22,7 @@ wb:
     ecommerce-mutation: 20s
     ecommerce-query: 3s
     gateway-default: 30s
+    gateway-chat: 120s
     gateway-stream-idle: 120s
     claim-long-poll: 20s
   limit:
@@ -49,3 +50,4 @@ wb:
     enabled: ${WB_AGENT_ENABLED:true}
     python-base-url: ${WB_AGENT_PYTHON_BASE_URL:http://127.0.0.1:8001}
     timeout-seconds: ${WB_AGENT_TIMEOUT_SECONDS:40}
+    wait-task-seconds: ${WB_AGENT_WAIT_TASK_SECONDS:90}

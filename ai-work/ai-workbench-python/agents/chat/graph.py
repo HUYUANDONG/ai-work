@@ -120,15 +120,25 @@ async def run_chat(
         )
 
     mem = runtime.memory_store.get(req.conversation_id)
+    if req.last_intent:
+        mem.last_intent = req.last_intent
+    if req.last_task_input:
+        mem.last_task_input = dict(req.last_task_input)
     if req.history and len(mem.working) < 2:
         for item in req.history:
             role = str(item.get("role") or "user")
             content = str(item.get("content") or "")
+            intent = item.get("intent")
             if content:
-                mem.add_turn(role, content)
+                mem.add_turn(
+                    role,
+                    content,
+                    intent=str(intent) if intent else None,
+                )
     mem.add_turn("user", req.message)
     last_intent = (
-        mem.last_intent
+        req.last_intent
+        or mem.last_intent
         or intent_mod.infer_last_task_intent(req.history)
         or intent_mod.infer_last_task_intent(mem.working)
     )
@@ -292,7 +302,8 @@ async def run_chat(
             )
 
         window = intent_mod.resolve_time_window_days(req.message, decision.window_days)
-        prev = mem.last_task_input if last_intent == "QUALITY" else {}
+        prev_raw = (req.last_task_input or mem.last_task_input) if last_intent == "QUALITY" else {}
+        prev = prev_raw if isinstance(prev_raw, dict) else {}
         task_input: dict[str, Any] = {
             "time_window_days": window
             or prev.get("time_window_days")
@@ -304,7 +315,7 @@ async def run_chat(
         reply = "已识别为质检。Java 建任务后将拉取特征、跑规则并生成质检报告。"
         mem.last_intent = "QUALITY"
         mem.last_task_input = dict(task_input)
-        mem.add_turn("assistant", reply)
+        mem.add_turn("assistant", reply, intent="QUALITY")
         return _with_debug(
             ChatResponse(
                 intent="QUALITY",
@@ -316,9 +327,10 @@ async def run_chat(
         )
 
     # EXPLOSION（默认主路径；短句「近7天」继承上一轮参数）
+    prev_input = req.last_task_input or mem.last_task_input
     task_input = intent_mod.build_explosion_input(
         req.message,
-        mem.last_task_input if last_intent == "EXPLOSION" else None,
+        prev_input if last_intent == "EXPLOSION" else None,
     )
     window = intent_mod.resolve_time_window_days(req.message, decision.window_days)
     if window is not None:
@@ -331,7 +343,7 @@ async def run_chat(
     )
     mem.last_intent = "EXPLOSION"
     mem.last_task_input = dict(task_input)
-    mem.add_turn("assistant", reply)
+    mem.add_turn("assistant", reply, intent="EXPLOSION")
     return _with_debug(
         ChatResponse(
             intent="EXPLOSION",
