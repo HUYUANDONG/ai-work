@@ -1,6 +1,8 @@
 # 对话入口 Agent（V1.0.0）
 
-配套 [requirements-v1.0.0.md](../requirements-v1.0.0.md)、[harness.md](harness.md)、[internal-api-contract.md](../internal-api-contract.md)。
+配套 [requirements-v1.0.0.md](../requirements-v1.0.0.md)、[harness.md](harness.md)、[internal-api-contract.md](../internal-api-contract.md)、[frontend-api-contract.md](../frontend-api-contract.md)。
+
+Vue 对话页只调 Java `POST /api/v1/agent/chat`（经 Gateway），不调 Python `/internal/chat`。
 
 ## 1. 范围
 
@@ -27,7 +29,8 @@
 | `QUEUED` | 否 | 长任务进行中：追问入队，或取消/暂停已请求 |
 | `META` / `OUT_OF_SCOPE` / `CLARIFY` | 否 | 否 |
 
-长任务进行中 Java 带 `active_task_id`；前端用 progress SSE 展示思考，并提供暂停/取消。追问默认排队，结束后由 Java 按序再调 Chat。详情见 [internal-api-contract.md](../internal-api-contract.md) §1.5。
+长任务进行中 Java 带 `active_task_id`。追问默认排队，结束后由 Java 按序再调 Chat。详情见 [internal-api-contract.md](../internal-api-contract.md) §1.5。  
+当前 Vue 页只接同步 `POST /api/v1/agent/chat`，progress SSE / 暂停 / 取消尚未接。
 
 ## 3. 示例
 

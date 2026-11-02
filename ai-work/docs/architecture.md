@@ -28,6 +28,25 @@ V1：**无跨任务全局指挥**；对话入口 + 代码路由。**Explosion �
 
 Python 仓目录分层（Controller / Service 心智）见 [python-package-layout.md](python-package-layout.md)。
 
+浏览器对话契约见 [frontend-api-contract.md](frontend-api-contract.md)；Java ↔ Python 见 [internal-api-contract.md](internal-api-contract.md)。
+
+## 当前已对接（对话链路）
+
+```text
+浏览器（ai-workbench-web，直连局域网 IP）
+  │ POST /api/v1/agent/chat + X-Wb-Dev-User
+  ▼
+ai-workbench-gateway   :8081   例 192.168.50.175
+  ▼
+ai-workbench-service   :8080   ChatBridgeService
+  ▼
+Python Agent           :8001   例 192.168.50.157
+```
+
+- 前端不直连 Python。Java `WB_AGENT_PYTHON_BASE_URL` 指向 Agent；改 `.env` 后须重启 Service。
+- local 身份：`X-Wb-Dev-User`。登录仍走电商 `outfit-admin`。
+- 会话列表仍在浏览器；消息回复以 Agent `reply` 为准。
+
 ## 阶段一已落地
 
 ```text
@@ -40,7 +59,7 @@ ai-workbench-gateway   Spring Cloud Gateway + Nacos 发现
 ai-workbench-service   Spring Boot 模块化单体
   │
   ├── Dubbo 注册到 Nacos（尚未消费电商只读接口）
-  └── 内部 HTTP（阶段二起对接 Python）
+  └── 内部 HTTP → Python `/internal/chat`（对话已通）
 ```
 
 ## 公共模块边界
@@ -68,6 +87,8 @@ ai-workbench-service   Spring Boot 模块化单体
 - 虚拟线程：Gateway 与 Service 均开启。
 - 超时预算：启动时校验外层大于内层。
 
-## 阶段一未接入
+## 阶段一未接入（骨架时）
 
-MySQL、Flyway、Redis、Sa-Token、Checkpoint PostgreSQL、OSS、电商真实只读 Dubbo、Python Agent。
+Redis、Sa-Token、Checkpoint PostgreSQL、OSS、电商真实只读 Dubbo。
+
+其后已打开：MySQL / Flyway（`WB_MYSQL_ENABLED`）、Python Agent 对话转发、Vue 对话页经 Gateway 调 `/api/v1/agent/chat`。

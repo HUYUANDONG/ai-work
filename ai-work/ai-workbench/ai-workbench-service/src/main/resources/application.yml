@@ -16,22 +16,28 @@ spring:
         server-addr: ${wb.nacos.server-addr}
         namespace: ${wb.nacos.discovery-namespace}
         enabled: ${wb.nacos.discovery-enabled}
+        ip: ${WB_NACOS_DISCOVERY_IP:}
       config:
         server-addr: ${wb.nacos.server-addr}
         namespace: ${wb.nacos.discovery-namespace}
         enabled: ${wb.nacos.config-enabled}
         import-check:
           enabled: false
+    inetutils:
+      preferred-networks: 192.168.
+      ignored-interfaces: VMware.*,vEthernet.*,Hyper-V.*,docker.*,蓝牙.*,本地连接.*
     loadbalancer:
       nacos:
         enabled: ${wb.nacos.discovery-enabled}
   datasource:
-    url: ${wb.mysql.url}
-    username: ${wb.mysql.username}
-    password: ${wb.mysql.password}
+    url: ${WB_MYSQL_URL:${wb.mysql.url}}
+    username: ${WB_MYSQL_USERNAME:${wb.mysql.username}}
+    password: ${WB_MYSQL_PASSWORD:${wb.mysql.password}}
     driver-class-name: com.mysql.cj.jdbc.Driver
     type: com.alibaba.druid.pool.DruidDataSource
     druid:
+      username: ${WB_MYSQL_USERNAME:${wb.mysql.username}}
+      password: ${WB_MYSQL_PASSWORD:${wb.mysql.password}}
       initial-size: 2
       min-idle: 2
       max-active: 20

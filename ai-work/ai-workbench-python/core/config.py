@@ -19,8 +19,8 @@ class Settings(BaseSettings):
         checkpoint_database_url: Checkpoint Postgres。
         java_base_url: Workbench Service 内网地址。
         java_mock_features: 是否用本地 fixture 充当特征。
-        typesafe_api_key: Jev / TypeSafe Key。
-        jev_*: 意图路由相关开关与门槛。
+        dashscope_api_key: 阿里云百炼 API Key。
+        decision_*: 决策模型意图路由相关开关与门槛。
         worker_*: Worker 轮询与租约。
     """
 
@@ -43,13 +43,34 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="WB_JAVA_MOCK_FEATURES",
     )
-    typesafe_api_key: str = Field(default="", validation_alias="TYPESAFE_API_KEY")
-    jev_intent_enabled: bool = Field(default=True, validation_alias="WB_JEV_INTENT_ENABLED")
-    jev_model: str = Field(default="jev-latest", validation_alias="WB_JEV_MODEL")
-    jev_min_confidence: float = Field(default=0.75, validation_alias="WB_JEV_MIN_CONFIDENCE")
-    jev_allow_rules_fallback: bool = Field(
+    dashscope_api_key: str = Field(default="", validation_alias="DASHSCOPE_API_KEY")
+    decision_intent_enabled: bool = Field(
         default=True,
-        validation_alias="WB_JEV_ALLOW_RULES_FALLBACK",
+        validation_alias="WB_DECISION_INTENT_ENABLED",
+    )
+    decision_model: str = Field(
+        default="decision-model-preview",
+        validation_alias="WB_DECISION_MODEL",
+    )
+    decision_min_confidence: float = Field(
+        default=0.75,
+        validation_alias="WB_DECISION_MIN_CONFIDENCE",
+    )
+    decision_allow_rules_fallback: bool = Field(
+        default=True,
+        validation_alias="WB_DECISION_ALLOW_RULES_FALLBACK",
+    )
+    decision_workspace_id: str = Field(
+        default="",
+        validation_alias="WB_DECISION_WORKSPACE_ID",
+    )
+    decision_region: str = Field(
+        default="cn-beijing",
+        validation_alias="WB_DECISION_REGION",
+    )
+    decision_base_url: str = Field(
+        default="",
+        validation_alias="WB_DECISION_BASE_URL",
     )
     hmac_secret_in: str = Field(default="", validation_alias="WB_HMAC_SECRET_IN")
     hmac_secret_out: str = Field(default="", validation_alias="WB_HMAC_SECRET_OUT")
@@ -60,13 +81,13 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=60, validation_alias="WB_WORKER_LEASE_SECONDS")
     worker_concurrency: int = Field(default=2, validation_alias="WB_WORKER_CONCURRENCY")
 
-    # OpenAI 兼容 Chat Completions（报表分析文案；不算正式分）
+    # 百炼 OpenAI 兼容 Chat Completions（报表分析文案；不算正式分）
     llm_api_key: str = Field(default="", validation_alias="WB_LLM_API_KEY")
     llm_base_url: str = Field(
-        default="https://api.openai.com/v1",
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         validation_alias="WB_LLM_BASE_URL",
     )
-    llm_model: str = Field(default="gpt-4o-mini", validation_alias="WB_LLM_MODEL")
+    llm_model: str = Field(default="qwen-plus", validation_alias="WB_LLM_MODEL")
     report_output_dir: str = Field(
         default="tmp/reports",
         validation_alias="WB_REPORT_OUTPUT_DIR",
@@ -84,6 +105,11 @@ class Settings(BaseSettings):
         default=8,
         validation_alias="WB_CHAT_WORKING_KEEP_LAST",
     )
+
+    @property
+    def resolved_llm_api_key(self) -> str:
+        """报表 LLM Key：优先 WB_LLM_API_KEY，否则复用 DASHSCOPE_API_KEY。"""
+        return (self.llm_api_key or "").strip() or (self.dashscope_api_key or "").strip()
 
 
 @lru_cache

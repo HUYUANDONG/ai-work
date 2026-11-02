@@ -3,7 +3,7 @@ FastAPI 启动入口（只负责 create_app，不含业务）。
 
 启动::
 
-    uvicorn app.main:app --reload --port 8001
+    uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 
 分层对照 Nest::
 
@@ -41,4 +41,9 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)
 

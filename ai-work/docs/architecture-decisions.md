@@ -55,7 +55,8 @@ MySQL / MyBatis-Plus 3.5.5 / Druid 1.2.20 / Flyway 已引入，由 `WB_MYSQL_ENA
 | ADR-024 | Explosion 内计划状态机可 `REVISE`，默认最多 2 次修订、3 轮会签，超时必须 FINISH 并降级标记 | 支持「看完 A 再调 B」又防止空转 |
 | ADR-025 | 目标模式不改写 `explosion_score` 公式；只影响策略取舍与话术（可选展示 `mode_rank`） | 同一 SKU 正式分口径唯一，便于复盘 |
 | ADR-026 | Chat 结构化意图；`OUT_OF_SCOPE` 硬阻断；时间窗缺省 30 天并告知，不因缺天数阻塞建任务；非法窗口须澄清/拒绝 | 降干扰与误派发；口径与小样本前提一致 |
-| ADR-027 | 对话意图路由用 TypeSafe 官方 `typesafe-sdk` + Jev Choice（`jev-latest`）；代码保留默认参数与建任务门槛；关键词仅降级 | 有限选项+置信度优于关键词与开放式 LLM JSON |
+| ADR-027 | 对话意图路由用阿里云百炼决策模型 `decision-model-preview`（System One Choice）；代码保留默认参数与建任务门槛；关键词仅降级 | 国内可达；有限选项+置信度优于关键词与开放式 LLM JSON；Jev 在国内不可用 |
+| ADR-028 | 浏览器只打 Gateway `/api/v1/agent/chat`，不直连 Python；联调走局域网 IP | Python 是内部契约；Gateway 清身份头。当前 Gateway `192.168.50.175:8081`，Python `192.168.50.157:8001` |
 
 ADR-005（默认 `retries=0`）对 **写操作** 仍有效。V1 无写操作；只读接口在 Adapter 上单独打开有限重试。
 
@@ -64,7 +65,7 @@ ADR-005（默认 `retries=0`）对 **写操作** 仍有效。V1 无写操作；�
 | 项 | 状态 |
 |---|---|
 | 依赖能否完整解析并编译 | **已通过**（2026-10-29 `mvn clean verify`） |
-| 应用在本机启动、健康检查、Gateway 转发、Trace 贯通 | **未验证**（按约定不由本次任务启动） |
+| 应用在本机启动、健康检查、Gateway 转发、Trace 贯通 | Gateway + Service 已本地启动；`POST /api/v1/agent/chat` 经 Gateway 打到 Python 已通（2026-11-02） |
 | Dubbo 在本地 Nacos 注册 | **未验证** |
 | 虚拟线程下 Dubbo / 未来 Druid / MySQL 驱动是否 pinning | **未验证** |
 | Nacos 客户端与 Dubbo registry-nacos 传递依赖是否冲突 | 以编译为准，运行时未验证 |

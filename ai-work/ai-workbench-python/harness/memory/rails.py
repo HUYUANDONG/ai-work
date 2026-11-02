@@ -35,6 +35,8 @@ class SessionMemory:
         summary: 压缩后的旧对话摘要（可空）。
         archives: 归档指针列表。
         constraints: 约束（错误决策可 supersede）。
+        last_intent: 上一轮任务意图（EXPLOSION/QUALITY）。
+        last_task_input: 上一轮任务入参，供短句补参叠加。
     """
 
     conversation_id: str
@@ -42,6 +44,8 @@ class SessionMemory:
     summary: str = ""
     archives: list[dict[str, Any]] = field(default_factory=list)
     constraints: list[Constraint] = field(default_factory=list)
+    last_intent: str | None = None
+    last_task_input: dict[str, Any] = field(default_factory=dict)
 
     def add_turn(self, role: str, content: str, *, keep_last: int = 12) -> None:
         """追加一轮，超出 keep_last 的进入待压缩区（由 compact 处理）。"""

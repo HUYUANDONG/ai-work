@@ -1,7 +1,8 @@
 # Java ↔ Python 内部 API 契约（V1）
 
-配套 [data-contract.md](data-contract.md)、[agents/chat-agent.md](agents/chat-agent.md)。  
-本文是 **Java 实现清单**：路径、字段、错误码、mock 行为。HMAC 本期不做，仅要求服务身份头。
+配套 [data-contract.md](data-contract.md)、[agents/chat-agent.md](agents/chat-agent.md)、[frontend-api-contract.md](frontend-api-contract.md)。  
+本文是 **Java ↔ Python** 实现清单：路径、字段、错误码、mock 行为。HMAC 本期不做，仅要求服务身份头。  
+浏览器对话走 Gateway `/api/v1/agent/chat`，不要调本文 `/internal/*`。
 
 **版本**：`workflow_version = explosion-quality-1.0.0`  
 **服务身份头**（双向）：`X-Workbench-Caller: java|python`
@@ -395,7 +396,12 @@ Python 每完成一个可见步骤上报；**Java 经会话 SSE 推给前端**�
 | 任务 claim / progress / heartbeat / complete / fail | `java_client` | `internalapi/task/*` |
 | 入队（对话 need_task） | mock: `enqueue_mock_task` | `POST /internal/tasks/enqueue`；`ChatBridgeService` |
 | 报告 upsert / 会话读取 | `tools/reports.py` | `internalapi/report/*` |
-| 对话 | `POST /internal/chat` | `AgentApiClient` → `POST /api/v1/agent/chat` |
+| 对话 | `POST /internal/chat` | `AgentApiClient` → 前端经 Gateway `POST /api/v1/agent/chat` |
 | Worker | `app/worker.py` | — |
 
-联调：Java 起 8080；Python `WB_JAVA_MOCK_FEATURES=false`、`WB_JAVA_BASE_URL=http://127.0.0.1:8080`；请求头 `X-Workbench-Caller: python|java`。
+联调（局域网，以 `.env` 为准）：
+
+- Java Gateway `192.168.50.175:8081`，Service `192.168.50.175:8080`
+- Python `WB_JAVA_MOCK_FEATURES=false`、`WB_JAVA_BASE_URL=http://192.168.50.175:8080`，监听 `0.0.0.0:8001`（当前机 `192.168.50.157`）
+- Java `WB_AGENT_PYTHON_BASE_URL=http://192.168.50.157:8001`
+- 内部头 `X-Workbench-Caller: python|java`；浏览器头见 [frontend-api-contract.md](frontend-api-contract.md)

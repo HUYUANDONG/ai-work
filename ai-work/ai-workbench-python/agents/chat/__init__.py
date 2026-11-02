@@ -1,1 +1,1 @@
-"""对话入口 Agent。意图优先 TypeSafe Jev（typesafe-sdk / jev-latest）；缺参默认后 NEED_TASK。不在对话请求内拉全店特征。详见 docs/agents/chat-agent.md。"""
+"""对话入口 Agent。意图优先阿里云百炼决策模型（decision-model-preview）；缺参默认后 NEED_TASK。不在对话请求内拉全店特征。详见 docs/agents/chat-agent.md。"""

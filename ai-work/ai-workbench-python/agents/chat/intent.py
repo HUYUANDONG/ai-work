@@ -1,41 +1,193 @@
 """
 对话意图与缺参默认（规则版，不依赖 LLM）。
-对话意图辅助：缺参默认、话术；规则分类仅作 Jev 降级。
+对话意图辅助：缺参默认、话术；规则分类仅作决策模型降级。
 
-
-
-正式路径见 ``agents.chat.jev_intent``（TypeSafe SDK / jev-latest）。
-
+正式路径见 ``agents.chat.decision_intent``（阿里云百炼 decision-model-preview）。
 """
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 from agents.chat import defaults as D
 
+_NEW_INTENT_KEYS = (
+    "爆品",
+    "潜力",
+    "选品",
+    "质检",
+    "亏本",
+    "断货",
+    "缺货",
+    "退货",
+    "分析 sku",
+    "分析sku",
+    "你能做什么",
+    "你会什么",
+    "怎么用",
+    "爬虫",
+    "写代码",
+    "改价",
+    "上架",
+    "下架",
+)
 
-def classify_message_rules(message: str) -> str:
+_EXPLOSION_KEYS = (
+    "爆品",
+    "潜力",
+    "增长",
+    "筛",
+    "选品",
+    "本周",
+    "盯",
+    "冲 gmv",
+    "冲gmv",
+    "冲量",
+    "清仓",
+    "毛利",
+)
+
+_WINDOW_RE = re.compile(
+    r"(?:近|最近|过去|前)?\s*(\d+)\s*(?:天|日)",
+    re.IGNORECASE,
+)
+_CN_DIGIT = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
+_CN_WINDOW_RE = re.compile(
+    r"(?:近|最近|过去|前)?\s*([一二两三四五六七八九十])\s*(?:天|日)",
+)
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def parse_time_window_days(message: str) -> int | None:
     """
-
-    规则粗分类（Jev 不可用时的兜底，不作为正式方案）。
-
-
+    从用户原文解析时间窗天数。
 
     Args:
-
         message: 用户原文。
 
+    Returns:
+        int | None: 1–90 的天数；无法解析则 None。
+    """
+    text = (message or "").strip().translate(_FULLWIDTH_DIGITS)
+    if not text:
+        return None
+    if any(k in text for k in ("近一周", "最近一周", "过去一周", "本周")):
+        return 7
+    if re.search(r"(?:近|最近|过去)?\s*(?:两|二)\s*周", text):
+        return 14
+    match = _WINDOW_RE.search(text)
+    if match:
+        days = int(match.group(1))
+        if 1 <= days <= 90:
+            return days
+    cn_match = _CN_WINDOW_RE.search(text)
+    if cn_match:
+        days = _CN_DIGIT.get(cn_match.group(1))
+        if days is not None and 1 <= days <= 90:
+            return days
+    return None
 
+
+def resolve_time_window_days(message: str, extra: int | None = None) -> int | None:
+    """
+    规则优先，决策模型抽出的天数作补充。
+
+    Args:
+        message: 用户原文。
+        extra: 模型给出的天数。
 
     Returns:
-
-        str: intent 枚举名。
-
+        int | None: 1–90；都没有则 None。
     """
+    parsed = parse_time_window_days(message)
+    if parsed is not None:
+        return parsed
+    if extra is not None and 1 <= int(extra) <= 90:
+        return int(extra)
+    return None
 
+
+def is_parameter_followup(message: str) -> bool:
+    """
+    是否只在改上一轮任务的参数（时间窗/目标/槽位），而不是新开一类意图。
+
+    Args:
+        message: 用户原文。
+
+    Returns:
+        bool: True 表示应继承上一轮 EXPLOSION/QUALITY。
+    """
+    text = (message or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if any(k in lowered for k in _NEW_INTENT_KEYS):
+        return False
+    has_window = parse_time_window_days(text) is not None
+    has_goal = any(k in text for k in ("清仓", "清库存", "毛利", "利润", "保利", "gmv", "GMV", "冲量"))
+    has_slots = bool(re.search(r"(盯\s*\d+|\d+\s*个)", text))
+    has_rerun = any(k in text for k in ("再跑", "重跑", "换窗口", "改成", "换成", "按这个", "按刚才"))
+    return has_window or has_goal or has_slots or has_rerun
+
+
+def infer_last_task_intent(history: list[dict[str, Any]] | None) -> str | None:
+    """
+    从最近对话推断上一轮任务意图。
+
+    Args:
+        history: role/content/intent 列表，旧→新。
+
+    Returns:
+        str | None: EXPLOSION / QUALITY。
+    """
+    for item in reversed(history or []):
+        intent = str(item.get("intent") or "").upper()
+        if intent in {"EXPLOSION", "QUALITY"}:
+            return intent
+        content = str(item.get("content") or "")
+        role = str(item.get("role") or "")
+        if role != "assistant":
+            continue
+        if "已识别为质检" in content:
+            return "QUALITY"
+        if any(
+            k in content
+            for k in ("已生成分析任务", "目标模式", "本周槽位", "筛爆品", "对比前")
+        ):
+            return "EXPLOSION"
+    return None
+
+
+def classify_message_rules(message: str, *, last_intent: str | None = None) -> str:
+    """
+    规则粗分类（决策模型不可用时的兜底）。
+
+    Args:
+        message: 用户原文。
+        last_intent: 本会话上一轮任务意图。
+
+    Returns:
+        str: intent 枚举名。
+    """
     text = (message or "").strip().lower()
-
     if not text:
         return "CLARIFY"
+
+    if last_intent in {"EXPLOSION", "QUALITY"} and is_parameter_followup(message):
+        return last_intent
 
     out_scope_keys = (
         "爬虫",
@@ -48,12 +200,10 @@ def classify_message_rules(message: str) -> str:
         "chatgpt",
         "翻译",
     )
-
     if any(k in text for k in out_scope_keys):
         return "OUT_OF_SCOPE"
 
     meta_keys = ("你能做什么", "你会什么", "怎么用", "什么口径", "帮助", "help")
-
     if any(k in text for k in meta_keys):
         return "META"
 
@@ -64,16 +214,14 @@ def classify_message_rules(message: str) -> str:
     )
 
     follow_keys = ("为什么", "第几", "刚才", "上一次", "这份报告", "先修再冲是什么")
-
     if any(k in text for k in follow_keys) and not any(
         k in text for k in ("再筛", "再跑", "重跑", "再质检")
     ):
         return "FOLLOWUP"
 
     if "质检" in text or (
-        looks_like_storewide_quality(message) and any(
-            k in text for k in ("亏本", "断货", "缺货", "退货", "有没有问题")
-        )
+        looks_like_storewide_quality(message)
+        and any(k in text for k in ("亏本", "断货", "缺货", "退货", "有没有问题"))
     ):
         return "QUALITY"
 
@@ -83,77 +231,81 @@ def classify_message_rules(message: str) -> str:
     ):
         return "SKU_DEEP"
 
-    explosion_keys = (
-        "爆品",
-        "潜力",
-        "增长",
-        "筛",
-        "选品",
-        "本周",
-        "盯",
-        "冲 gmv",
-        "冲量",
-        "清仓",
-        "毛利",
-    )
-
-    if any(k in text for k in explosion_keys):
+    if any(k in text for k in _EXPLOSION_KEYS):
         return "EXPLOSION"
+
+    if last_intent in {"EXPLOSION", "QUALITY"} and is_parameter_followup(message):
+        return last_intent
 
     return "CLARIFY"
 
 
-def build_explosion_input(message: str) -> dict:
+def build_explosion_input(message: str, base: dict[str, Any] | None = None) -> dict[str, Any]:
     """
-
-    为爆品任务填充默认 input（时间窗 30 / GMV / 槽位 5）。
-
-
+    为爆品任务填充 input；可叠加上一轮参数。
 
     Args:
-
-        message: 用户原文（用于粗解析目标；正式可用第二次 Jev Choice）。
-
-
+        message: 用户原文。
+        base: 上一轮任务 input。
 
     Returns:
-
         dict: NEED_TASK.input。
-
     """
-
-    text = (message or "").lower()
-
-    goal = D.DEFAULT_GOAL_MODE
-
-    if "清仓" in text or "清库存" in text:
-        goal = "CLEARANCE"
-
-    elif "毛利" in text or "利润" in text or "保利" in text:
-        goal = "PROFIT"
-
-    slots = D.DEFAULT_FOCUS_SLOTS
-
-    for n in (3, 5, 8, 10):
-        if f"盯 {n}" in text or f"盯{n}" in text or f"{n} 个" in text or f"{n}个" in text:
-            slots = min(n, D.MAX_FOCUS_SLOTS)
-
-            break
-
-    return {
+    data: dict[str, Any] = {
         "time_window_days": D.DEFAULT_TIME_WINDOW_DAYS,
-        "goal_mode": goal,
-        "focus_slots": slots,
+        "goal_mode": D.DEFAULT_GOAL_MODE,
+        "focus_slots": D.DEFAULT_FOCUS_SLOTS,
         "top_n": D.DEFAULT_TOP_N,
         "on_sale_only": True,
         "category_id": None,
         "sku_ids": None,
     }
+    if base:
+        for key, value in base.items():
+            if key in data and value is not None:
+                data[key] = value
+
+    text = (message or "").lower()
+    window = parse_time_window_days(message)
+    if window is not None:
+        data["time_window_days"] = window
+
+    if "清仓" in text or "清库存" in text:
+        data["goal_mode"] = "CLEARANCE"
+    elif "毛利" in text or "利润" in text or "保利" in text:
+        data["goal_mode"] = "PROFIT"
+    elif "gmv" in text or "冲量" in text:
+        data["goal_mode"] = "GMV"
+
+    for n in (3, 5, 8, 10):
+        if f"盯 {n}" in text or f"盯{n}" in text or f"{n} 个" in text or f"{n}个" in text:
+            data["focus_slots"] = min(n, D.MAX_FOCUS_SLOTS)
+            break
+
+    return data
+
+
+def window_notice(days: int, *, user_specified: bool) -> str:
+    """
+    时间窗告知。
+
+    Args:
+        days: 实际使用的天数。
+        user_specified: 是否由用户本轮指定。
+
+    Returns:
+        str: 回复前缀。
+    """
+    if user_specified:
+        return f"已按**近 {days} 天对比前 {days} 天**准备任务。"
+    return (
+        f"未指定时间窗时，按**近 {days} 天对比前 {days} 天**做正式分析。"
+        "已按该口径准备任务；若要换窗口可以说一声再跑一版。"
+    )
 
 
 def out_of_scope_reply() -> str:
     """无关请求拒绝话术。"""
-
     return (
         "我只能帮你做店内**爆品作战清单**和**商品质检**（看增长、风险、本周盯谁）。"
         "你刚才说的不在能力范围内。"
@@ -163,14 +315,8 @@ def out_of_scope_reply() -> str:
 
 def default_window_notice() -> str:
     """未指定时间窗时的告知。"""
-
-    return (
-        f"未指定时间窗时，按**近 {D.DEFAULT_TIME_WINDOW_DAYS} 天对比前 "
-        f"{D.DEFAULT_TIME_WINDOW_DAYS} 天**做正式分析。"
-        "已按该口径准备任务；若要换窗口可以说一声再跑一版。"
-    )
+    return window_notice(D.DEFAULT_TIME_WINDOW_DAYS, user_specified=False)
 
 
 # 兼容旧调用名
-
 classify_message = classify_message_rules

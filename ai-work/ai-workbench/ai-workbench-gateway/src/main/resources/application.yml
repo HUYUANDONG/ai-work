@@ -33,14 +33,14 @@ spring:
             allowCredentials: true
       routes:
         - id: workbench-stream
-          uri: ${WB_SERVICE_URI:lb://ai-workbench-service}
+          uri: ${wb.gateway.service-uri}
           predicates:
             - Path=/api/v1/conversations/*/stream,/api/v1/conversations/stream
           metadata:
             response-timeout: ${wb.timeout.gateway-stream-idle}
             connect-timeout: 5000
         - id: workbench-service
-          uri: ${WB_SERVICE_URI:lb://ai-workbench-service}
+          uri: ${wb.gateway.service-uri}
           predicates:
             - Path=/api/**
           metadata:

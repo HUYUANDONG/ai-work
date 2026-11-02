@@ -11,7 +11,9 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 
 /**
@@ -33,10 +35,16 @@ public class HttpAgentApiClient implements AgentApiClient {
             RestClient.Builder restClientBuilder,
             @Value("${wb.agent.python-base-url:http://127.0.0.1:8001}") String baseUrl,
             @Value("${wb.agent.timeout-seconds:40}") long timeoutSeconds) {
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory();
+        String normalized = baseUrl.replaceAll("/$", "");
+        log.info("Python Agent baseUrl={}", normalized);
+        HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
         factory.setReadTimeout(Duration.ofSeconds(timeoutSeconds));
         this.restClient = restClientBuilder
-                .baseUrl(baseUrl.replaceAll("/$", ""))
+                .baseUrl(normalized)
                 .requestFactory(factory)
                 .defaultHeader(WorkbenchCallerInterceptor.HEADER, "java")
                 .build();
@@ -58,9 +66,15 @@ public class HttpAgentApiClient implements AgentApiClient {
                 throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE, "Python Agent 返回空响应");
             }
             return response;
+        } catch (RestClientResponseException ex) {
+            log.error("call python /internal/chat failed status={} body={}",
+                    ex.getStatusCode(), ex.getResponseBodyAsString(), ex);
+            throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE,
+                    "Python Agent 不可用: HTTP " + ex.getStatusCode().value(), ex);
         } catch (RestClientException ex) {
             log.error("call python /internal/chat failed", ex);
-            throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE, "Python Agent 不可用", ex);
+            throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE,
+                    "Python Agent 不可用: " + ex.getMessage(), ex);
         }
     }
 }

@@ -9,7 +9,7 @@ Controller 只收 HTTP；本类编排「一轮对话」用例：
 
 from __future__ import annotations
 
-# agents.chat.graph: 领域图——Jev 意图 + 缺参默认 + 组装 NEED_TASK
+# agents.chat.graph: 领域图——决策模型意图 + 缺参默认 + 组装 NEED_TASK
 from agents.chat.graph import run_chat
 
 # AppRuntime: 进程共享依赖（配置、JavaClient 等）

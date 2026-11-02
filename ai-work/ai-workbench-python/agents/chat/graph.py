@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from agents.chat import intent as intent_mod
+from agents.chat.decision_intent import resolve_intent
 from agents.chat.followup import answer_followup
-from agents.chat.jev_intent import resolve_intent
 from agents.chat.sku_deep import analyze_sku
 from agents.chat.sku_parse import (
     extract_sku_ids,
@@ -119,17 +119,38 @@ async def run_chat(
             {"source": "queue_gate", "confidence": 1.0},
         )
 
+    mem = runtime.memory_store.get(req.conversation_id)
+    if req.history and len(mem.working) < 2:
+        for item in req.history:
+            role = str(item.get("role") or "user")
+            content = str(item.get("content") or "")
+            if content:
+                mem.add_turn(role, content)
+    mem.add_turn("user", req.message)
+    last_intent = (
+        mem.last_intent
+        or intent_mod.infer_last_task_intent(req.history)
+        or intent_mod.infer_last_task_intent(mem.working)
+    )
+
     decision = await resolve_intent(
         req.message,
-        api_key=settings.typesafe_api_key,
-        enabled=settings.jev_intent_enabled,
-        model=settings.jev_model,
-        min_confidence=settings.jev_min_confidence,
-        allow_rules_fallback=settings.jev_allow_rules_fallback,
+        api_key=settings.dashscope_api_key,
+        enabled=settings.decision_intent_enabled,
+        model=settings.decision_model,
+        min_confidence=settings.decision_min_confidence,
+        allow_rules_fallback=settings.decision_allow_rules_fallback,
+        base_url=settings.decision_base_url,
+        workspace_id=settings.decision_workspace_id,
+        region=settings.decision_region,
+        history=mem.working[:-1],
+        last_intent=last_intent,
+        chat_base_url=settings.llm_base_url,
+        chat_model=settings.llm_model,
     )
 
     kind = decision.intent
-    # 规则/Jev 后置校正：有明确 SKU 深挖话术时优先 SKU_DEEP
+    # 规则/决策模型后置校正：有明确 SKU 深挖话术时优先 SKU_DEEP
     if kind in {"CLARIFY", "EXPLOSION", "QUALITY"} and looks_like_sku_deep(req.message):
         kind = "SKU_DEEP"
     if kind == "QUALITY" and looks_like_sku_deep(req.message) and "质检" not in req.message:
@@ -171,10 +192,11 @@ async def run_chat(
 
     if kind == "CLARIFY":
         reply = "你是要**筛爆品**、**质检报告**，还是**分析某个 SKU**？可以说具体一点。"
-        if decision.source == "jev_disabled":
+        if decision.source == "decision_disabled":
             reply = (
-                "意图服务未配置（需要 TYPESAFE_API_KEY）。"
-                "请配置 Jev，或开启规则降级。也可直接说「筛爆品」「质检」或「分析 SKU-xxx」。"
+                "意图服务未配置（需要 DASHSCOPE_API_KEY）。"
+                "请配置阿里云百炼决策模型，或开启规则降级。"
+                "也可直接说「筛爆品」「质检」或「分析 SKU-xxx」。"
             )
         return _with_debug(
             ChatResponse(
@@ -269,29 +291,47 @@ async def run_chat(
                 intent_meta,
             )
 
+        window = intent_mod.resolve_time_window_days(req.message, decision.window_days)
+        prev = mem.last_task_input if last_intent == "QUALITY" else {}
         task_input: dict[str, Any] = {
-            "time_window_days": 30,
-            "sku_ids": skus or None,
+            "time_window_days": window
+            or prev.get("time_window_days")
+            or 30,
+            "sku_ids": skus or prev.get("sku_ids"),
             "on_sale_only": True,
             "storewide_problems": bool(storewide and not skus),
         }
+        reply = "已识别为质检。Java 建任务后将拉取特征、跑规则并生成质检报告。"
+        mem.last_intent = "QUALITY"
+        mem.last_task_input = dict(task_input)
+        mem.add_turn("assistant", reply)
         return _with_debug(
             ChatResponse(
                 intent="QUALITY",
-                reply="已识别为质检。Java 建任务后将拉取特征、跑规则并生成质检报告。",
+                reply=reply,
                 need_task=NeedTask(task_type="QUALITY", input=task_input),
                 clarify_pending=False,
             ),
             intent_meta,
         )
 
-    # EXPLOSION（默认主路径）
-    task_input = intent_mod.build_explosion_input(req.message)
+    # EXPLOSION（默认主路径；短句「近7天」继承上一轮参数）
+    task_input = intent_mod.build_explosion_input(
+        req.message,
+        mem.last_task_input if last_intent == "EXPLOSION" else None,
+    )
+    window = intent_mod.resolve_time_window_days(req.message, decision.window_days)
+    if window is not None:
+        task_input["time_window_days"] = window
+    user_set_window = window is not None
     reply = (
-        f"{intent_mod.default_window_notice()}"
+        f"{intent_mod.window_notice(int(task_input['time_window_days']), user_specified=user_set_window)}"
         f"目标模式 {task_input['goal_mode']}，本周槽位 {task_input['focus_slots']}。"
         "已生成分析任务请求，Java 建任务后由 Worker 继续。"
     )
+    mem.last_intent = "EXPLOSION"
+    mem.last_task_input = dict(task_input)
+    mem.add_turn("assistant", reply)
     return _with_debug(
         ChatResponse(
             intent="EXPLOSION",

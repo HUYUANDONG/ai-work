@@ -74,7 +74,10 @@ public class InMemoryReportStore {
         }
         List<Map<String, Object>> all = byConversation.getOrDefault(conversationId, List.of());
         int safeLimit = Math.max(1, limit);
-        List<Map<String, Object>> slice = all.stream().limit(safeLimit).map(LinkedHashMap::new).toList();
+        List<Map<String, Object>> slice = all.stream()
+                .limit(safeLimit)
+                .<Map<String, Object>>map(LinkedHashMap::new)
+                .toList();
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("conversation_id", conversationId);
         resp.put("reports", slice);

@@ -2,8 +2,9 @@ wb:
   security:
     allow-unsigned-identity: true
 
-# 无 Nacos 时可将 WB_NACOS_DISCOVERY_ENABLED 设为 false，并用直连地址：
-# WB_SERVICE_URI=http://127.0.0.1:8080
+# 跨设备时 Gateway 填 Service 的局域网地址，例如：
+# WB_SERVICE_URI=http://192.168.50.175:8080
+# 或走 Nacos：WB_SERVICE_URI=lb://ai-workbench-service（Service 必须注册 192.168 而不是 169.254）
 logging:
   level:
     cn.aiworkbench: INFO

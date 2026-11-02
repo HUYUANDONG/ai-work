@@ -1,5 +1,6 @@
 package cn.aiworkbench.service;
 
+import cn.aiworkbench.common.core.env.DotenvBootstrap;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -15,6 +16,7 @@ public class WorkbenchServiceApplication {
      * @param args 启动参数
      */
     public static void main(String[] args) {
+        DotenvBootstrap.load();
         SpringApplication.run(WorkbenchServiceApplication.class, args);
     }
 }

@@ -17,6 +17,7 @@ public class MysqlAutoConfigurationExcluder implements EnvironmentPostProcessor,
             "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
             "org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration",
             "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration",
+            "com.alibaba.druid.spring.boot3.autoconfigure.DruidDataSourceAutoConfigure",
             "com.alibaba.druid.spring.boot3.autoconfigure.DruidDataSourceAutoConfiguration",
             "com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration"
     };
@@ -29,14 +30,44 @@ public class MysqlAutoConfigurationExcluder implements EnvironmentPostProcessor,
      */
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
-        boolean enabled = Boolean.parseBoolean(environment.getProperty("WB_MYSQL_ENABLED", "false"));
-        if (enabled) {
+        boolean enabled = Boolean.parseBoolean(firstNonBlank(
+                environment.getProperty("WB_MYSQL_ENABLED"),
+                environment.getProperty("wb.mysql.enabled"),
+                "false"));
+        if (!enabled) {
+            environment.getPropertySources().addFirst(new MapPropertySource(
+                    "wb-mysql-disabled",
+                    Map.of("spring.autoconfigure.exclude", String.join(",", EXCLUDES))
+            ));
             return;
         }
-        environment.getPropertySources().addFirst(new MapPropertySource(
-                "wb-mysql-disabled",
-                Map.of("spring.autoconfigure.exclude", String.join(",", EXCLUDES))
-        ));
+        String username = firstNonBlank(
+                environment.getProperty("WB_MYSQL_USERNAME"),
+                environment.getProperty("spring.datasource.username"),
+                environment.getProperty("wb.mysql.username"));
+        if (username == null || username.isBlank()) {
+            throw new IllegalStateException(
+                    "WB_MYSQL_ENABLED=true 但未读到 WB_MYSQL_USERNAME。请确认已加载 ai-workbench/.env，"
+                            + "或在运行配置中设置 WB_MYSQL_USERNAME / WB_MYSQL_PASSWORD。");
+        }
+    }
+
+    /**
+     * 取第一个非空值。
+     *
+     * @param values 候选
+     * @return 非空字符串，全空则 null
+     */
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     /**

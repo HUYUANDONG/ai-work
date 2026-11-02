@@ -1,0 +1,21 @@
+{
+  "java.jdt.ls.java.home": "D:\\jdk",
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-21",
+      "path": "D:\\jdk",
+      "default": true
+    }
+  ],
+  "java.import.maven.java.home": "D:\\jdk",
+  "maven.terminal.customEnv": [
+    {
+      "environmentVariable": "JAVA_HOME",
+      "value": "D:\\jdk"
+    }
+  ],
+  "terminal.integrated.env.windows": {
+    "JAVA_HOME": "D:\\jdk",
+    "PATH": "D:\\jdk\\bin;${env:PATH}"
+  }
+}

@@ -23,7 +23,7 @@ class AppRuntime:
     Attributes:
         settings: 环境配置。
         java_client: 调用 Workbench 内部 HTTP。
-        llm_client: OpenAI 兼容聊天（报表叙事）。
+        llm_client: 百炼 OpenAI 兼容聊天（报表叙事）。
         memory_store: 会话分层记忆。
         token_budget: 默认 LLM 输入预算。
     """
@@ -48,7 +48,7 @@ class AppRuntime:
         cfg = settings or get_settings()
         llm = LlmClient(
             base_url=cfg.llm_base_url,
-            api_key=cfg.llm_api_key,
+            api_key=cfg.resolved_llm_api_key,
             model=cfg.llm_model,
         )
         budget = TokenBudget(

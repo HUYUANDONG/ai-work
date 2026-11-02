@@ -15,6 +15,7 @@ wb:
     port: ${WB_SERVICE_PORT:8080}
   gateway:
     port: ${WB_GATEWAY_PORT:8081}
+    service-uri: ${WB_SERVICE_URI:lb://ai-workbench-service}
   timeout:
     python-execute-operation: 40s
     java-execute-operation: 30s

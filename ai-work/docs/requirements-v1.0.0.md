@@ -6,6 +6,7 @@
 >
 > 相关文档：
 > - [architecture.md](architecture.md) — 当前骨架
+> - [frontend-api-contract.md](frontend-api-contract.md) — 浏览器 → Gateway 对话契约
 > - [architecture-decisions.md](architecture-decisions.md) — 决策与版本
 > - [dubbo-design.md](dubbo-design.md) — 只读 Dubbo 边界
 > - [data-contract.md](data-contract.md) — 快照特征与报告契约

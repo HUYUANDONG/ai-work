@@ -1,5 +1,5 @@
 """
-OpenAI 兼容 Chat Completions 客户端。
+OpenAI 兼容 Chat Completions 客户端（默认对接阿里云百炼）。
 
 用于爆品报表 HTML 生成；无 Key 时调用方应走模板降级。
 正式分禁止由本客户端计算。
@@ -17,7 +17,7 @@ class LlmClient:
     薄封装：POST {base}/chat/completions。
 
     Attributes:
-        base_url: 如 https://api.openai.com/v1
+        base_url: 如 https://dashscope.aliyuncs.com/compatible-mode/v1
         api_key: Bearer Token。
         model: 模型名。
         timeout: 秒。
