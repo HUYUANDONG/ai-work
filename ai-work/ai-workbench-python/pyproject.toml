@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-workbench-python"
+version = "0.1.0"
+description = "AI Workbench Agent Harness (conversation + explosion + quality)"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "sse-starlette>=2.1.0",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "asyncpg>=0.30.0",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.6.0",
+  "httpx>=0.27.0",
+  "langgraph>=0.2.0",
+  "langgraph-checkpoint-postgres>=2.0.0",
+  "langchain-core>=0.3.0",
+  "python-dotenv>=1.0.0",
+  "typesafe-sdk>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.9.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "app*",
+  "api*",
+  "services*",
+  "schemas*",
+  "core*",
+  "db*",
+  "harness*",
+  "agents*",
+  "scoring*",
+  "clients*",
+  "tools*",
+  "reporting*",
+]
+
+# ----- Ruff：你本地手动格式化 / 检查 -----
+# 安装：uv sync --extra dev
+# 格式化当前文件：uv run ruff format path/to/file.py
+# 格式化全仓：    uv run ruff format .
+# 仅检查：        uv run ruff check .
+# 自动修部分 lint：uv run ruff check --fix .
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [
+  ".venv",
+  "__pycache__",
+  ".git",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade
+  "B",   # bugbear
+]
+ignore = [
+  "E501",  # 行宽交给 formatter；注释里长 URL 不硬报错
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+  "app",
+  "api",
+  "services",
+  "schemas",
+  "core",
+  "db",
+  "harness",
+  "agents",
+  "scoring",
+  "clients",
+  "tools",
+  "reporting",
+]

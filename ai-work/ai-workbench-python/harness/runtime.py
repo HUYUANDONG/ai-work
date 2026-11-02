@@ -1,0 +1,72 @@
+"""
+进程共享依赖（AppRuntime）。
+
+注意：这不是网上常说的「Agent Harness 平台」。
+这里只是 settings + JavaClient + LlmClient 等共用依赖盒。
+"""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from clients.java_client import JavaClient
+from clients.llm_client import LlmClient
+from core.config import Settings, get_settings
+from harness.memory.rails import MemoryStore
+from harness.memory.tokens import TokenBudget
+
+
+@dataclass
+class AppRuntime:
+    """
+    进程内共享运行时依赖。
+
+    Attributes:
+        settings: 环境配置。
+        java_client: 调用 Workbench 内部 HTTP。
+        llm_client: OpenAI 兼容聊天（报表叙事）。
+        memory_store: 会话分层记忆。
+        token_budget: 默认 LLM 输入预算。
+    """
+
+    settings: Settings = field(default_factory=get_settings)
+    java_client: JavaClient = field(default_factory=JavaClient)
+    llm_client: LlmClient | None = None
+    memory_store: MemoryStore = field(default_factory=MemoryStore)
+    token_budget: TokenBudget = field(default_factory=TokenBudget)
+
+    @classmethod
+    def create(cls, settings: Settings | None = None) -> "AppRuntime":
+        """
+        工厂方法：用给定或默认 Settings 构建。
+
+        Args:
+            settings: 可选配置。
+
+        Returns:
+            AppRuntime: 新实例。
+        """
+        cfg = settings or get_settings()
+        llm = LlmClient(
+            base_url=cfg.llm_base_url,
+            api_key=cfg.llm_api_key,
+            model=cfg.llm_model,
+        )
+        budget = TokenBudget(
+            context_window=cfg.llm_context_window,
+            reserve_output=cfg.llm_reserve_output,
+        )
+        return cls(
+            settings=cfg,
+            java_client=JavaClient(
+                base_url=cfg.java_base_url,
+                mock_features=cfg.java_mock_features,
+            ),
+            llm_client=llm,
+            memory_store=MemoryStore(),
+            token_budget=budget,
+        )
+
+    def report_dir(self) -> Path:
+        """报表输出目录（相对 cwd 或绝对路径）。"""
+        return Path(self.settings.report_output_dir)
+

@@ -1,0 +1,7 @@
+"""对话缺参默认值（与 chat-agent / data-contract 一致）。"""
+
+DEFAULT_TIME_WINDOW_DAYS = 30
+DEFAULT_GOAL_MODE = "GMV"
+DEFAULT_FOCUS_SLOTS = 5
+MAX_FOCUS_SLOTS = 10
+DEFAULT_TOP_N = 20

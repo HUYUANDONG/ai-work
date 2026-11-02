@@ -1,0 +1,1 @@
+"""Agent 包：对话入口 + Explosion / Quality 专家。V1 无跨任务全局指挥；Worker 按 task_type 代码路由。Explosion 任务内含作战指挥与会签 multi-agent。"""

@@ -1,0 +1,139 @@
+"""
+Worker：领取 → 推送思考 → 可暂停取消 → complete / fail。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from core.config import get_settings
+from db.session import close_db, init_db
+from harness.router import route_task
+from harness.runtime import AppRuntime
+from harness.task_control import TaskAborted
+from tools.tasks import claim_task, complete_task, fail_task, heartbeat_task
+
+logger = logging.getLogger(__name__)
+
+
+async def poll_once(runtime: AppRuntime) -> dict[str, Any] | None:
+    """领取一条可执行任务。"""
+    return await claim_task(runtime, worker_id="py-worker")
+
+
+async def execute_claimed(runtime: AppRuntime, task: dict[str, Any]) -> dict[str, Any]:
+    """执行已领取任务并 complete/fail；支持 CANCELLED / PAUSED。"""
+    task_id = str(task.get("task_id") or "")
+    lease = str(task.get("lease_token") or "")
+    task_type = str(task.get("task_type") or "")
+
+    try:
+        await heartbeat_task(runtime, task_id, lease_token=lease, progress="running")
+        result = await route_task(task_type, task, runtime)
+        status = str(result.get("status") or "")
+
+        if status in {"CANCELLED", "PAUSED"}:
+            await fail_task(
+                runtime,
+                task_id,
+                lease_token=lease,
+                error_code=status,
+                message=str(result.get("message") or status),
+            )
+            return result
+
+        if status.startswith("FAILED"):
+            await fail_task(
+                runtime,
+                task_id,
+                lease_token=lease,
+                error_code=status,
+                message=str(result.get("message") or status),
+            )
+            return result
+
+        summary = str(result.get("summary") or result.get("message") or "")
+        result_meta: dict[str, Any] = {}
+        if result.get("download"):
+            result_meta["download"] = result["download"]
+        if result.get("thinking_events"):
+            result_meta["thinking_event_count"] = len(result["thinking_events"])
+        await complete_task(
+            runtime,
+            task_id,
+            lease_token=lease,
+            summary=summary,
+            result_meta=result_meta,
+        )
+        return result
+    except TaskAborted as aborted:
+        logger.info("task aborted task_id=%s kind=%s", task_id, aborted.kind)
+        await fail_task(
+            runtime,
+            task_id,
+            lease_token=lease,
+            error_code=aborted.kind,
+            message=aborted.reason,
+        )
+        return {
+            "status": aborted.kind,
+            "task_id": task_id,
+            "message": aborted.reason,
+        }
+    except Exception as exc:
+        logger.exception("task failed task_id=%s task_type=%s", task_id, task_type)
+        try:
+            await fail_task(
+                runtime,
+                task_id,
+                lease_token=lease,
+                error_code="WORKER_EXCEPTION",
+                message=str(exc),
+            )
+        except Exception:
+            logger.exception("fail_task callback failed task_id=%s", task_id)
+        raise
+
+
+async def run_worker_loop() -> None:
+    """Worker 主循环。"""
+    settings = get_settings()
+    runtime = AppRuntime.create(settings)
+
+    if settings.checkpoint_database_url:
+        init_db(settings)
+
+    logger.info(
+        "worker started profile=%s poll=%ss mock_java=%s",
+        settings.profile,
+        settings.worker_poll_interval_seconds,
+        settings.java_mock_features,
+    )
+
+    try:
+        while True:
+            task = await poll_once(runtime)
+            if task is None:
+                await asyncio.sleep(settings.worker_poll_interval_seconds)
+                continue
+            try:
+                await execute_claimed(runtime, task)
+            except Exception:
+                continue
+    finally:
+        await close_db()
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+    asyncio.run(run_worker_loop())
+
+
+if __name__ == "__main__":
+    main()
+
