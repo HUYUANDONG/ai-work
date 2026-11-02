@@ -1,0 +1,10 @@
+wb:
+  security:
+    allow-unsigned-identity: true
+
+# 无 Nacos 时可将 WB_NACOS_DISCOVERY_ENABLED 设为 false，并用直连地址：
+# WB_SERVICE_URI=http://127.0.0.1:8080
+logging:
+  level:
+    cn.aiworkbench: INFO
+    org.springframework.cloud.gateway: INFO

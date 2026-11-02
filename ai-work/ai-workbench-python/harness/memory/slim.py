@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from harness.memory.fields import ops_goods_view
 from harness.memory.tokens import TokenBudget, estimate_json
 
 
@@ -17,17 +18,13 @@ def slim_candidates_for_llm(
     max_items: int = 30,
 ) -> list[dict[str, Any]]:
     """
-    会签/报表用候选裁剪：只留模型需要的字段，并按预算截断条数。
+    会签用候选裁剪：运营接口字段 + 内部会签键，并按预算截断条数。
     """
     b = budget or TokenBudget(context_window=32_000, reserve_output=2048, guard_ratio=0.65)
     keep_keys = (
         "sku_id",
-        "title",
-        "rank",
-        "explosion_score",
         "quality_risk_level",
         "quality_rule_ids",
-        "feature_excerpt",
         "skipped_items",
         "action_bucket",
         "signal_confidence",
@@ -39,6 +36,9 @@ def slim_candidates_for_llm(
     limit = min(max_items, b.input_limit // 50)  # 粗上限
     for c in candidates[: max(1, limit)]:
         row = {k: c.get(k) for k in keep_keys if k in c}
+        ops = ops_goods_view(c)
+        if ops:
+            row["ops"] = ops
         cost = estimate_json(row)
         if committed + cost > b.input_limit // 2:
             break
@@ -59,16 +59,15 @@ def slim_reports_for_llm(
         header = r.get("header") or {}
         items = []
         for it in list(r.get("items") or [])[:max_items]:
-            items.append(
-                {
-                    "sku_id": it.get("sku_id"),
-                    "explosion_score": it.get("explosion_score"),
-                    "action_bucket": it.get("action_bucket"),
-                    "quality_risk_level": it.get("quality_risk_level") or it.get("risk_level"),
-                    "in_focus_slot": it.get("in_focus_slot"),
-                    "primary_action": it.get("primary_action"),
-                }
-            )
+            row = ops_goods_view(it)
+            issues = it.get("issues")
+            if issues:
+                row["issue_rule_ids"] = [
+                    str(x.get("rule_id"))
+                    for x in issues
+                    if isinstance(x, dict) and x.get("rule_id")
+                ][:6]
+            items.append(row)
         slimmed.append(
             {
                 "task_id": r.get("task_id"),

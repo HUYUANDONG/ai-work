@@ -10,10 +10,11 @@ from typing import Any
 from agents.explosion.council_json import llm_json, slim_candidates
 from clients.llm_client import LlmClient
 
-SIGNAL_SYSTEM = """你是爆品信号官。根据候选 JSON 输出意见，禁止编造数字或改分。
+SIGNAL_SYSTEM = """你是爆品信号官。根据候选 JSON 的 ops（运营接口字段）输出意见，禁止编造数字。
 只输出 JSON：
-{"items":[{"sku_id":"...","signal_confidence":"HIGH|MID|LOW","attribution":"短文","looks_like_breakout":true,"cited_fields":["gmv_30d"]}]}
-confidence：分高且样本字段齐全→HIGH；矛盾或 skipped 多→LOW。"""
+{"items":[{"sku_id":"...","signal_confidence":"HIGH|MID|LOW","attribution":"短文","looks_like_breakout":true,"cited_fields":["orderSales","orderNumbers"]}]}
+数字只引用 ops.orderSales/orderNumbers/goodsPv/goodsUv/ratePer；昨日 PV/UV 与实时销售不是同一窗口。
+confidence：实时销售与订单都强→HIGH；流量高但实时订单弱或字段缺失→LOW。"""
 
 RISK_SYSTEM = """你是爆品风控官。根据候选 JSON 输出意见，禁止编造 rule_id。
 只输出 JSON：
@@ -49,7 +50,7 @@ def _rules_signal(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "signal_confidence": conf,
                 "attribution": f"代码分 {score}，风险 {risk}",
                 "looks_like_breakout": breakout,
-                "cited_fields": ["explosion_score", "quality_risk_level"],
+                "cited_fields": ["orderSales", "orderNumbers"],
                 "degraded": True,
             }
         )

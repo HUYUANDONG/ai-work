@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.aiworkbench.service.conversation.mapper.ConversationMapper">
+
+    <resultMap id="ConversationMap" type="cn.aiworkbench.service.conversation.infra.ConversationDO">
+        <id     property="id"          column="id"/>
+        <result property="userId"      column="user_id"/>
+        <result property="title"       column="title"/>
+        <result property="description" column="description"/>
+        <result property="createdAt"   column="created_at"/>
+        <result property="updatedAt"   column="updated_at"/>
+    </resultMap>
+
+    <insert id="insert"
+            parameterType="cn.aiworkbench.service.conversation.infra.ConversationDO"
+            useGeneratedKeys="true"
+            keyProperty="id">
+        INSERT INTO wb_conversation (user_id, title, description, created_at, updated_at)
+        VALUES (#{userId}, #{title}, #{description}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <select id="selectList" resultMap="ConversationMap">
+        SELECT id, user_id, title, description, created_at, updated_at
+        FROM wb_conversation
+        WHERE user_id = #{userId}
+        ORDER BY updated_at DESC
+    </select>
+</mapper>

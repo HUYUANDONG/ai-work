@@ -1,12 +1,14 @@
 """
-确定性 Session Facts：从报告/候选轨迹抽取，禁止模型编造数字。
+确定性 Session Facts：从报告抽运营接口字段，禁止模型编造数字。
 
-灵感来自业界「工具轨迹 → 事实块」做法（ADM 同类），实现为本仓适配版。
+字段以 docs/llm-field-glossary.md 商品销量接口为准。
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from harness.memory.fields import ops_goods_view
 
 
 def extract_report_facts(reports: list[dict[str, Any]], *, max_items: int = 8) -> dict[str, Any]:
@@ -26,23 +28,13 @@ def extract_report_facts(reports: list[dict[str, Any]], *, max_items: int = 8) -
         items = list(r.get("items") or [])[:max_items]
         rows = []
         for it in items:
-            row: dict[str, Any] = {"sku_id": it.get("sku_id")}
-            if "explosion_score" in it:
-                row["explosion_score"] = it.get("explosion_score")
-            if "action_bucket" in it:
-                row["action_bucket"] = it.get("action_bucket")
-            if "quality_risk_level" in it:
-                row["quality_risk_level"] = it.get("quality_risk_level")
-            if "risk_level" in it:
-                row["risk_level"] = it.get("risk_level")
-            if "in_focus_slot" in it:
-                row["in_focus_slot"] = it.get("in_focus_slot")
-            rows.append(row)
+            row = ops_goods_view(it)
+            if row:
+                rows.append(row)
         blocks.append(
             {
                 "task_id": r.get("task_id"),
                 "task_type": r.get("task_type"),
-                "scoring_version": header.get("scoring_version"),
                 "snapshot_date": header.get("snapshot_date"),
                 "summary": (header.get("summary") or "")[:300],
                 "items": rows,
@@ -51,7 +43,11 @@ def extract_report_facts(reports: list[dict[str, Any]], *, max_items: int = 8) -
         )
     return {
         "source": "code_extracted",
-        "note": "数字与桶位仅来自已落库报告，模型不得改写。",
+        "note": (
+            "数字仅来自运营接口商品销数字段（goodsId/orderSales/orderNumbers/"
+            "goodsPv/goodsUv/ratePer 等）。缺字段视为未知，禁止当 0；"
+            "goodsPv/goodsUv 为昨日流量，与实时 orderSales/orderNumbers 不是同一窗口。"
+        ),
         "reports": blocks,
     }
 
@@ -70,23 +66,30 @@ def render_facts_block(facts: dict[str, Any], *, max_chars: int = 1200) -> str:
     lines = ["[Session Facts]", facts.get("note") or ""]
     for b in facts.get("reports") or []:
         lines.append(
-            f"- {b.get('task_type')} {b.get('archive_ref')} "
-            f"snapshot={b.get('snapshot_date')} scoring={b.get('scoring_version')}"
+            f"- {b.get('task_type')} {b.get('archive_ref')} snapshot={b.get('snapshot_date')}"
         )
         if b.get("summary"):
             lines.append(f"  summary: {b['summary'][:160]}")
         for it in b.get("items") or []:
-            parts = [str(it.get("sku_id"))]
-            if it.get("explosion_score") is not None:
-                parts.append(f"score={it['explosion_score']}")
-            if it.get("action_bucket"):
-                parts.append(f"bucket={it['action_bucket']}")
-            risk = it.get("quality_risk_level") or it.get("risk_level")
-            if risk:
-                parts.append(f"risk={risk}")
+            goods_id = it.get("goodsId") or "?"
+            name = it.get("goodsName") or ""
+            parts = [str(goods_id)]
+            if name:
+                parts.append(str(name))
+            for key in (
+                "orderSales",
+                "orderNumbers",
+                "orderPays",
+                "goodsPv",
+                "goodsUv",
+                "ratePer",
+                "statDay",
+                "gbName",
+            ):
+                if key in it and it[key] is not None:
+                    parts.append(f"{key}={it[key]}")
             lines.append("  · " + " ".join(parts))
     text = "\n".join(lines)
     if len(text) > max_chars:
         return text[: max_chars - 20] + "\n…(facts truncated)"
     return text
-

@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from agents.quality.state import QualityState
 from clients.llm_client import LlmClient
 from harness.runtime import AppRuntime
+from schemas.ops_fields import slim_ops_excerpt
 from scoring import config as scoring_config
 from scoring.explosion import score_sku
 from scoring.quality import check_sku
@@ -94,6 +95,7 @@ async def node_rule_check(state: QualityState, config: RunnableConfig) -> dict[s
                 "explosion_candidate": exp["explosion_score"] >= 60,
                 "issues": q.get("issues") or [],
                 "skipped_rules": q.get("skipped_rules") or [],
+                "feature_excerpt": slim_ops_excerpt(row),
             }
         )
     rows.sort(

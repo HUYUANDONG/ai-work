@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from schemas.ops_fields import slim_ops_excerpt
 from scoring import config as C
 from scoring.explosion import score_sku
 from scoring.math_utils import num
@@ -74,15 +75,7 @@ def rank_candidates(
                 "quality_rule_ids": q["quality_rule_ids"],
                 "quality_score": q["quality_score"],
                 "ops_score": q["ops_score"],
-                "feature_excerpt": {
-                    "gmv_30d": row.get("gmv_30d"),
-                    "gmv_prev_30d": row.get("gmv_prev_30d"),
-                    "clicks_30d": row.get("clicks_30d"),
-                    "orders_30d": row.get("orders_30d"),
-                    "stock_qty": row.get("stock_qty"),
-                    "price": row.get("price"),
-                    "cost": row.get("cost"),
-                },
+                "feature_excerpt": slim_ops_excerpt(row),
             }
         )
 

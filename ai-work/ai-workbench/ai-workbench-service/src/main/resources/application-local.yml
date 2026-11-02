@@ -1,0 +1,9 @@
+wb:
+  security:
+    allow-unsigned-identity: true
+
+logging:
+  level:
+    cn.aiworkbench: INFO
+    org.apache.dubbo: INFO
+    com.alibaba.nacos: WARN

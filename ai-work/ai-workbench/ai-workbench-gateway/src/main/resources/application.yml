@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: ai-workbench-gateway
+  profiles:
+    default: local
+  config:
+    import: classpath:wb-base.yml
+  threads:
+    virtual:
+      enabled: true
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${wb.nacos.server-addr}
+        namespace: ${wb.nacos.discovery-namespace}
+        enabled: ${wb.nacos.discovery-enabled}
+      config:
+        enabled: false
+        import-check:
+          enabled: false
+    gateway:
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: ${wb.timeout.gateway-default}
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin, RETAIN_UNIQUE
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedHeaders: '*'
+            allowedMethods: '*'
+            allowedOriginPatterns: '*'
+            allowCredentials: true
+      routes:
+        - id: workbench-stream
+          uri: ${WB_SERVICE_URI:lb://ai-workbench-service}
+          predicates:
+            - Path=/api/v1/conversations/*/stream,/api/v1/conversations/stream
+          metadata:
+            response-timeout: ${wb.timeout.gateway-stream-idle}
+            connect-timeout: 5000
+        - id: workbench-service
+          uri: ${WB_SERVICE_URI:lb://ai-workbench-service}
+          predicates:
+            - Path=/api/**
+          metadata:
+            response-timeout: ${wb.timeout.gateway-default}
+            connect-timeout: 5000
+
+server:
+  port: ${wb.gateway.port}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+  info:
+    env:
+      enabled: true
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"

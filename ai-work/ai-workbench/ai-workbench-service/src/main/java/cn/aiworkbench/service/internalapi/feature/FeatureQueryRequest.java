@@ -1,0 +1,27 @@
+package cn.aiworkbench.service.internalapi.feature;
+
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
+import lombok.Data;
+
+import java.util.List;
+
+/**
+ * {@code POST /internal/features/query} 请求体。
+ */
+@Data
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+public class FeatureQueryRequest {
+
+    /** 统计日，默认当天快照。 */
+    private String statDate;
+
+    /** 是否仅在售，默认 true。 */
+    private Boolean onSaleOnly = Boolean.TRUE;
+
+    /** 类目过滤。 */
+    private String categoryId;
+
+    /** 指定 SKU 列表（质检批量 ≤50）。 */
+    private List<String> skuIds;
+}

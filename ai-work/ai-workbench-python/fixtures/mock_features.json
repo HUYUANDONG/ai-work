@@ -25,7 +25,19 @@
       "return_orders_90d": 1,
       "orders_90d": 40,
       "review_score": 4.6,
-      "review_count": 30
+      "review_count": 30,
+      "goodsId": "SKU-001",
+      "goodsName": "示例爆款A",
+      "goodsBrandId": "B-001",
+      "gbName": "示例品牌A",
+      "supBrandName": "供应商甲",
+      "orderSales": 9900,
+      "orderNumbers": 2,
+      "orderPays": 2,
+      "goodsPv": 860,
+      "goodsUv": 310,
+      "ratePer": 0.65,
+      "statDay": "2026-10-31"
     },
     {
       "sku_id": "SKU-002",
@@ -50,7 +62,19 @@
       "return_orders_90d": 0,
       "orders_90d": 25,
       "review_score": 4.8,
-      "review_count": 20
+      "review_count": 20,
+      "goodsId": "SKU-002",
+      "goodsName": "高分但缺货B",
+      "goodsBrandId": "B-001",
+      "gbName": "示例品牌A",
+      "supBrandName": "供应商甲",
+      "orderSales": 12900,
+      "orderNumbers": 1,
+      "orderPays": 1,
+      "goodsPv": 720,
+      "goodsUv": 240,
+      "ratePer": 0.42,
+      "statDay": "2026-10-31"
     },
     {
       "sku_id": "SKU-003",
@@ -75,7 +99,19 @@
       "return_orders_90d": 2,
       "orders_90d": 18,
       "review_score": 4.2,
-      "review_count": 12
+      "review_count": 12,
+      "goodsId": "SKU-003",
+      "goodsName": "微利增长C",
+      "goodsBrandId": "B-002",
+      "gbName": "示例品牌B",
+      "supBrandName": "供应商乙",
+      "orderSales": 5900,
+      "orderNumbers": 1,
+      "orderPays": 1,
+      "goodsPv": 410,
+      "goodsUv": 150,
+      "ratePer": 0.67,
+      "statDay": "2026-10-31"
     },
     {
       "sku_id": "SKU-004",
@@ -100,7 +136,19 @@
       "return_orders_90d": 0,
       "orders_90d": 2,
       "review_score": 5.0,
-      "review_count": 1
+      "review_count": 1,
+      "goodsId": "SKU-004",
+      "goodsName": "样本不足D",
+      "goodsBrandId": "B-001",
+      "gbName": "示例品牌A",
+      "supBrandName": "供应商甲",
+      "orderSales": 0,
+      "orderNumbers": 0,
+      "orderPays": 0,
+      "goodsPv": 90,
+      "goodsUv": 28,
+      "ratePer": 0,
+      "statDay": "2026-10-31"
     },
     {
       "sku_id": "SKU-005",
@@ -125,7 +173,19 @@
       "return_orders_90d": 1,
       "orders_90d": 20,
       "review_score": 4.5,
-      "review_count": 15
+      "review_count": 15,
+      "goodsId": "SKU-005",
+      "goodsName": "平稳款E",
+      "goodsBrandId": "B-001",
+      "gbName": "示例品牌A",
+      "supBrandName": "供应商甲",
+      "orderSales": 7900,
+      "orderNumbers": 1,
+      "orderPays": 1,
+      "goodsPv": 280,
+      "goodsUv": 95,
+      "ratePer": 1.05,
+      "statDay": "2026-10-31"
     }
   ]
 }

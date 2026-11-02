@@ -1,0 +1,44 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.p12
+*.jks
+
+# Logs
+logs/
+*.log
+
+# Build
+*.class
+*.jar
+*.war
+*.nar
+!**/src/main/**/lib/*.jar
+!**/src/test/**/lib/*.jar

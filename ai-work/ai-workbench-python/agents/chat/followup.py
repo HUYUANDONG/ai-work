@@ -7,6 +7,7 @@ from typing import Any
 
 from clients.llm_client import LlmClient
 from harness.memory.facts import extract_report_facts, render_facts_block
+from harness.memory.fields import ops_goods_view
 from harness.memory.repair import chat_with_repair
 from harness.memory.slim import slim_reports_for_llm
 from harness.runtime import AppRuntime
@@ -15,7 +16,9 @@ from tools.reports import get_conversation_reports
 logger = logging.getLogger(__name__)
 
 SYSTEM = """你是运营助手。根据 [Session Facts] 与上下文回答追问。
-硬性：只能使用 Facts/报告中的数字与桶位；禁止编造 SKU；禁止建议改价上架等写回。简短中文。"""
+硬性：数字只引用运营接口字段（goodsId、goodsName、orderSales、orderNumbers、orderPays、goodsPv、goodsUv、ratePer、statDay）。
+缺字段视为未知，禁止当 0；禁止把昨日 goodsPv/goodsUv 与实时 orderSales/orderNumbers 说成同一窗口。
+禁止编造未出现的商品；禁止建议改价上架等写回。简短中文。"""
 
 
 def _template_followup(reports: list[dict[str, Any]], question: str) -> str:
@@ -29,16 +32,15 @@ def _template_followup(reports: list[dict[str, Any]], question: str) -> str:
         str(header.get("summary") or "（无 summary）"),
     ]
     for it in items[:5]:
-        sku = it.get("sku_id")
-        if r0.get("task_type") == "EXPLOSION":
-            lines.append(
-                f"- {sku}: 分 {it.get('explosion_score')} / "
-                f"{it.get('action_bucket')} / 风险 {it.get('quality_risk_level')}"
-            )
-        else:
-            lines.append(
-                f"- {sku}: 风险 {it.get('risk_level')} / 爆品分 {it.get('explosion_score')}"
-            )
+        ops = ops_goods_view(it)
+        gid = ops.get("goodsId") or it.get("sku_id") or "?"
+        name = ops.get("goodsName") or ""
+        sales = ops.get("orderSales")
+        orders = ops.get("orderNumbers")
+        lines.append(
+            f"- {gid} {name}: orderSales={sales} orderNumbers={orders} "
+            f"goodsPv={ops.get('goodsPv')} goodsUv={ops.get('goodsUv')}"
+        )
     lines.append(f"（针对你的问题：{question[:80]}）")
     return "\n".join(lines)
 

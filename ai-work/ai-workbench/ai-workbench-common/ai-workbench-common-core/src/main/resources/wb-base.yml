@@ -1,0 +1,50 @@
+# 工作台中间件地址集中配置。密钥一律通过环境变量注入，不写默认值。
+wb:
+  nacos:
+    server-addr: ${WB_NACOS_SERVER_ADDR:127.0.0.1:8848}
+    discovery-namespace: ${WB_NACOS_DISCOVERY_NAMESPACE:ai_workbench}
+    discovery-enabled: ${WB_NACOS_DISCOVERY_ENABLED:true}
+    config-enabled: ${WB_NACOS_CONFIG_ENABLED:false}
+  dubbo:
+    registry-address: nacos://${WB_NACOS_SERVER_ADDR:127.0.0.1:8848}
+    registry-namespace: ${WB_DUBBO_NACOS_NAMESPACE:${WB_NACOS_DISCOVERY_NAMESPACE:ai_workbench}}
+    registry-group: ${WB_DUBBO_NACOS_GROUP:dubbo}
+    consumer-timeout-ms: ${WB_DUBBO_CONSUMER_TIMEOUT_MS:3000}
+  service:
+    host: ${WB_SERVICE_HOST:127.0.0.1}
+    port: ${WB_SERVICE_PORT:8080}
+  gateway:
+    port: ${WB_GATEWAY_PORT:8081}
+  timeout:
+    python-execute-operation: 40s
+    java-execute-operation: 30s
+    ecommerce-mutation: 20s
+    ecommerce-query: 3s
+    gateway-default: 30s
+    gateway-stream-idle: 120s
+    claim-long-poll: 20s
+  limit:
+    max-streams-per-user: 3
+    max-streams-per-instance: 500
+    max-active-tasks-per-user: 20
+    max-ecommerce-concurrency: 50
+    max-request-body-bytes: 1048576
+    max-callback-payload-bytes: 262144
+  security:
+    internal-identity-secret: ${WB_INTERNAL_IDENTITY_SECRET:}
+    identity-ttl-seconds: 60
+    allow-unsigned-identity: ${WB_ALLOW_UNSIGNED_IDENTITY:false}
+  mysql:
+    enabled: ${WB_MYSQL_ENABLED:false}
+    url: ${WB_MYSQL_URL:jdbc:mysql://127.0.0.1:3306/ai_workbench?useUnicode=true&characterEncoding=utf8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai}
+    username: ${WB_MYSQL_USERNAME:}
+    password: ${WB_MYSQL_PASSWORD:}
+  redis:
+    host: ${WB_REDIS_HOST:127.0.0.1}
+    port: ${WB_REDIS_PORT:6379}
+    password: ${WB_REDIS_PASSWORD:}
+    ssl-enabled: ${WB_REDIS_SSL_ENABLED:false}
+  agent:
+    enabled: ${WB_AGENT_ENABLED:true}
+    python-base-url: ${WB_AGENT_PYTHON_BASE_URL:http://127.0.0.1:8001}
+    timeout-seconds: ${WB_AGENT_TIMEOUT_SECONDS:40}

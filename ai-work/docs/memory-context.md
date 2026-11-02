@@ -9,7 +9,7 @@
 | 能力 | 文件 | 做法 |
 |---|---|---|
 | Token 预算 | `tokens.py` | CJK≈1、其它≈4 字/token；`guard_ratio` 输入守卫；可用真实 `prompt_tokens` 校准 |
-| Session Facts | `facts.py` | **代码**从报告抽 SKU/分/桶/风险，禁止模型编数 |
+| Session Facts | `facts.py` | **代码**从报告抽运营接口字段（`goodsId`/`orderSales`/`orderNumbers`/`goodsPv`/`goodsUv`/`ratePer` 等，见 `llm-field-glossary.md`）；缺字段不当 0；禁止把内部 `gmv_30d`/`explosion_score` 改名冒充接口字段 |
 | 分层记忆 | `rails.py` | working / summary / archive 指针 / constraints（可 supersede 推翻） |
 | 确定性压缩 | `rails.compact_working` | 留尾部、旧轮折叠进 summary（不做 summary-of-summary 二次压糊） |
 | 载荷瘦身 | `slim.py` | 会签/追问 JSON 按预算截断 |

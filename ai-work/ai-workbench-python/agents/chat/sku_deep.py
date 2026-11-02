@@ -7,35 +7,36 @@ import logging
 from typing import Any
 
 from clients.llm_client import LlmClient
+from harness.memory.fields import ops_goods_view
 from harness.runtime import AppRuntime
-from scoring.explosion import score_sku
 from scoring.quality import check_sku
 from scoring.store_stats import build_store_stats
 from tools.features import get_product_features, query_features
 
 logger = logging.getLogger(__name__)
 
-SYSTEM = """你是店内商品运营顾问。根据锁定的指标 JSON 给出简短中文建议。
-硬性要求：不得编造数字；引用 JSON 中的字段；指出主要风险规则；给出 2～4 条可执行建议。
-若高爆品分且高风险，必须写「先修再冲」。不要输出 Markdown 代码围栏。"""
+SYSTEM = """你是店内商品运营顾问。根据锁定的运营接口字段给出简短中文建议。
+硬性要求：数字只引用 item 中的 goodsId/orderSales/orderNumbers/goodsPv/goodsUv/ratePer 等词典字段；
+缺字段视为未知，禁止当 0；昨日 PV/UV 与实时销售额不是同一窗口。
+指出 quality.issues 中的规则；给出 2～4 条可执行建议。不要输出 Markdown 代码围栏。"""
 
 
 def _template_advice(locked: dict[str, Any]) -> str:
     item = locked.get("item") or {}
     q = locked.get("quality") or {}
-    exp = locked.get("explosion") or {}
-    sku = item.get("sku_id")
-    title = item.get("title") or ""
-    score = exp.get("explosion_score")
+    goods_id = item.get("goodsId") or locked.get("sku_id")
+    name = item.get("goodsName") or ""
     risk = q.get("quality_risk_level")
     rules = ", ".join(q.get("quality_rule_ids") or []) or "无"
     tip = "可关注转化与投放。" if risk in (None, "NONE", "LOW") else "建议先处理风险再放量。"
     return (
-        f"**{sku}** {title}\n"
-        f"- 爆品分（代码）：{score}\n"
+        f"**{goods_id}** {name}\n"
+        f"- orderSales={item.get('orderSales')} orderNumbers={item.get('orderNumbers')} "
+        f"orderPays={item.get('orderPays')}\n"
+        f"- goodsPv={item.get('goodsPv')} goodsUv={item.get('goodsUv')} ratePer={item.get('ratePer')} "
+        f"（PV/UV 为昨日，销售为实时）\n"
         f"- 质检风险：{risk}（规则：{rules}）\n"
-        f"- 建议：{tip}\n"
-        f"- 近 30 天 GMV：{item.get('gmv_30d')}，点击：{item.get('clicks_30d')}，库存：{item.get('stock_qty')}"
+        f"- 建议：{tip}"
     )
 
 
@@ -79,31 +80,13 @@ async def analyze_sku(
         peers = [item]
 
     store_stats = build_store_stats(peers)
-    exp = score_sku(item, store_stats=store_stats)
     q = check_sku(item, store_stats=store_stats)
 
     locked = {
         "sku_id": sku_id,
         "snapshot_date": feat.get("snapshot_date"),
         "user_question": user_question,
-        "item": {
-            "sku_id": item.get("sku_id"),
-            "title": item.get("title"),
-            "category_id": item.get("category_id"),
-            "gmv_30d": item.get("gmv_30d"),
-            "gmv_prev_30d": item.get("gmv_prev_30d"),
-            "clicks_30d": item.get("clicks_30d"),
-            "orders_30d": item.get("orders_30d"),
-            "stock_qty": item.get("stock_qty"),
-            "price": item.get("price"),
-            "cost": item.get("cost"),
-            "review_score": item.get("review_score"),
-        },
-        "explosion": {
-            "explosion_score": exp["explosion_score"],
-            "score_breakdown": exp.get("score_breakdown"),
-            "skipped_items": exp.get("skipped_items"),
-        },
+        "item": ops_goods_view(item),
         "quality": {
             "quality_risk_level": q["quality_risk_level"],
             "quality_rule_ids": q["quality_rule_ids"],

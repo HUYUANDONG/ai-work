@@ -9,6 +9,7 @@
 """
 
 from harness.memory.facts import extract_report_facts, render_facts_block
+from harness.memory.fields import ops_goods_view, slim_ops_excerpt
 from harness.memory.progress import ProgressBreaker
 from harness.memory.rails import MemoryStore, SessionMemory
 from harness.memory.repair import chat_with_repair, is_empty_output, is_fake_completion
@@ -20,6 +21,8 @@ __all__ = [
     "estimate_tokens",
     "extract_report_facts",
     "render_facts_block",
+    "ops_goods_view",
+    "slim_ops_excerpt",
     "MemoryStore",
     "SessionMemory",
     "chat_with_repair",
