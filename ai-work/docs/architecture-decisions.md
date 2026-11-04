@@ -57,6 +57,7 @@ MySQL / MyBatis-Plus 3.5.5 / Druid 1.2.20 / Flyway 已引入，由 `WB_MYSQL_ENA
 | ADR-026 | Chat 结构化意图；`OUT_OF_SCOPE` 硬阻断；时间窗缺省 30 天并告知，不因缺天数阻塞建任务；非法窗口须澄清/拒绝 | 降干扰与误派发；口径与小样本前提一致 |
 | ADR-027 | 对话意图路由用阿里云百炼决策模型 `decision-model-preview`（System One Choice）；代码保留默认参数与建任务门槛；关键词仅降级 | 国内可达；有限选项+置信度优于关键词与开放式 LLM JSON；Jev 在国内不可用 |
 | ADR-028 | 浏览器只打 Gateway `/api/v1/agent/chat`，不直连 Python；联调走局域网 IP | Python 是内部契约；Gateway 清身份头。当前 Gateway `192.168.50.175:8081`，Python `192.168.50.157:8001` |
+| ADR-029 | 叶子 `BaseAgent` + `TaskAgent` 注册表 + `harness/resilience`；`ExplosionSupervisor` 编排本仓 Signal/Risk/Strategy（学参考编排思路，不搬其 Agent）；Chat 手写；无跨 `task_type` 自动派活 | 扩展与编排分离；避免「照搬推荐流水线」。见 [agents/harness.md](agents/harness.md) §0 |
 
 ADR-005（默认 `retries=0`）对 **写操作** 仍有效。V1 无写操作；只读接口在 Adapter 上单独打开有限重试。
 

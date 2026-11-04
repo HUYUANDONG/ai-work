@@ -20,10 +20,17 @@ logger = logging.getLogger(__name__)
 class TaskAborted(Exception):
     """用户暂停或取消。"""
 
-    def __init__(self, reason: str, *, kind: str = "CANCELLED") -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        kind: str = "CANCELLED",
+        progress: str = "",
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.kind = kind  # CANCELLED | PAUSED
+        self.progress = progress
 
 
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
@@ -88,6 +95,37 @@ class TaskControl:
         except Exception:
             logger.exception("post_task_progress failed task_id=%s", self.task_id)
 
+    async def emit_llm_delta(self, delta: str) -> None:
+        """
+        推送模型 token 增量到 Java SSE。
+
+        不写入本地 events，避免把全文碎片塞进最终 summary。
+
+        Args:
+            delta: 增量文本。
+        """
+        text = delta or ""
+        if not text:
+            return
+        event = {
+            "seq": self._seq,
+            "task_id": self.task_id,
+            "stage": "llm_delta",
+            "title": "",
+            "detail": text,
+            "data": {"delta": text},
+            "visible": True,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            await self.runtime.java_client.post_task_progress(
+                self.task_id,
+                lease_token=self.lease_token,
+                event=event,
+            )
+        except Exception:
+            logger.exception("post_task_progress llm_delta failed task_id=%s", self.task_id)
+
     async def checkpoint(self, progress: str = "") -> dict[str, Any]:
         """
         心跳并读取取消/暂停标志。
@@ -112,6 +150,7 @@ class TaskControl:
             raise TaskAborted(
                 str(ctrl.get("cancel_reason") or "用户取消"),
                 kind="CANCELLED",
+                progress=progress,
             )
         if ctrl.get("pause_requested"):
             await self.emit(
@@ -122,6 +161,7 @@ class TaskControl:
             raise TaskAborted(
                 str(ctrl.get("pause_reason") or "用户暂停"),
                 kind="PAUSED",
+                progress=progress,
             )
         return ctrl
 

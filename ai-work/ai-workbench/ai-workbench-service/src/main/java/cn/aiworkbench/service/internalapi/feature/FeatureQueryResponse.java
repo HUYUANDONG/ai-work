@@ -19,4 +19,11 @@ public class FeatureQueryResponse {
     private String snapshotDate;
     private int rowCount;
     private List<Map<String, Object>> items;
+    /** fixture / goodsStatList / no_credentials / error */
+    private String source;
+    /**
+     * 金额单位（元/分），挂在响应级，避免每行重复。
+     */
+    private String amountUnit;
+    private String message;
 }

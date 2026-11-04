@@ -1,6 +1,10 @@
 package cn.aiworkbench.service.internalapi.task;
 
+import cn.aiworkbench.service.conversation.sse.ConversationSseHub;
 import cn.aiworkbench.service.internalapi.support.InternalApiException;
+import cn.aiworkbench.service.persist.TaskPersistService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -17,10 +21,55 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 内存任务运行时：领取、进度、心跳、完成/失败。正式版可换 DB/Redis。
+ * 任务运行时。MySQL 开启时以 {@code ai_task} 为队列权威（SKIP LOCKED 领取）；
+ * 未开库时退回进程内存（单测 / 无库联调）。
  */
 @Component
 public class InMemoryTaskRuntime {
+
+    private final ConversationSseHub sseHub;
+    private final ObjectProvider<TaskPersistService> persistProvider;
+
+    /**
+     * 测试用：不落库。
+     *
+     * @param sseHub 会话推送
+     */
+    public InMemoryTaskRuntime(ConversationSseHub sseHub) {
+        this(sseHub, new ObjectProvider<>() {
+            @Override
+            public TaskPersistService getObject() {
+                return null;
+            }
+
+            @Override
+            public TaskPersistService getObject(Object... args) {
+                return null;
+            }
+
+            @Override
+            public TaskPersistService getIfAvailable() {
+                return null;
+            }
+
+            @Override
+            public TaskPersistService getIfUnique() {
+                return null;
+            }
+        });
+    }
+
+    /**
+     * @param sseHub          会话推送
+     * @param persistProvider 可选 MySQL 队列权威
+     */
+    @Autowired
+    public InMemoryTaskRuntime(
+            ConversationSseHub sseHub,
+            ObjectProvider<TaskPersistService> persistProvider) {
+        this.sseHub = sseHub;
+        this.persistProvider = persistProvider;
+    }
 
     private final Deque<Map<String, Object>> queue = new ArrayDeque<>();
     private final Map<String, Map<String, Object>> leased = new ConcurrentHashMap<>();
@@ -47,7 +96,20 @@ public class InMemoryTaskRuntime {
         task.put("conversation_id", stringOr(body.get("conversation_id"), "c-unknown"));
         task.put("user_id", stringOr(body.get("user_id"), "u-unknown"));
         Object input = body.get("input");
-        task.put("input", input instanceof Map<?, ?> m ? new LinkedHashMap<>(castMap(m)) : new LinkedHashMap<>());
+        Map<String, Object> inputMap = input instanceof Map<?, ?> m
+                ? new LinkedHashMap<>(castMap(m))
+                : new LinkedHashMap<>();
+        // LangGraph thread_id：首跑默认用 task_id；续跑必须带上原 graph_thread_id
+        Object existingThread = inputMap.get("graph_thread_id");
+        if (existingThread == null || String.valueOf(existingThread).isBlank()) {
+            inputMap.put("graph_thread_id", taskId);
+        }
+        task.put("input", inputMap);
+        TaskPersistService db = persist();
+        if (db != null) {
+            db.onEnqueue(task);
+            return new LinkedHashMap<>(task);
+        }
         queue.addLast(task);
         control.put(taskId, defaultControl());
         return new LinkedHashMap<>(task);
@@ -67,6 +129,12 @@ public class InMemoryTaskRuntime {
             throw InternalApiException.badRequest("task_types 不能为空");
         }
         var allow = taskTypes.stream().map(t -> t == null ? "" : t.toUpperCase()).toList();
+        TaskPersistService db = persist();
+        if (db != null) {
+            Optional<Map<String, Object>> claimed = db.claim(allow, workflowVersion, workerId);
+            claimed.ifPresent(task -> leased.put(String.valueOf(task.get("task_id")), new LinkedHashMap<>(task)));
+            return claimed.map(LinkedHashMap::new);
+        }
         for (var it = queue.iterator(); it.hasNext(); ) {
             Map<String, Object> task = it.next();
             String type = String.valueOf(task.get("task_type"));
@@ -92,8 +160,32 @@ public class InMemoryTaskRuntime {
      * @param event      事件
      */
     public void postProgress(String taskId, String leaseToken, Map<String, Object> event) {
-        assertLease(taskId, leaseToken);
-        progress.computeIfAbsent(taskId, id -> new ArrayList<>()).add(event == null ? Map.of() : new LinkedHashMap<>(event));
+        Map<String, Object> task = assertLease(taskId, leaseToken);
+        Map<String, Object> safe = event == null ? Map.of() : new LinkedHashMap<>(event);
+        progress.computeIfAbsent(taskId, id -> new ArrayList<>()).add(safe);
+        String conversationId = String.valueOf(task.getOrDefault("conversation_id", "c-unknown"));
+        String stage = String.valueOf(safe.getOrDefault("stage", ""));
+        if ("llm_delta".equals(stage)) {
+            Object delta = safe.get("detail");
+            if (delta == null && safe.get("data") instanceof Map<?, ?> data) {
+                delta = data.get("delta");
+            }
+            sseHub.publish(conversationId, "llm_delta", Map.of(
+                    "task_id", taskId,
+                    "delta", delta == null ? "" : String.valueOf(delta)
+            ));
+            return;
+        }
+        if (Boolean.FALSE.equals(safe.get("visible"))) {
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("task_id", taskId);
+        payload.put("stage", stage);
+        payload.put("title", safe.getOrDefault("title", ""));
+        payload.put("detail", safe.getOrDefault("detail", ""));
+        payload.put("seq", safe.get("seq"));
+        sseHub.publish(conversationId, "thinking", payload);
     }
 
     /**
@@ -106,9 +198,15 @@ public class InMemoryTaskRuntime {
      */
     public Map<String, Object> heartbeat(String taskId, String leaseToken, String progressText) {
         Map<String, Object> task = assertLease(taskId, leaseToken);
-        Map<String, Object> ctrl = new LinkedHashMap<>(control.computeIfAbsent(taskId, id -> defaultControl()));
-        ctrl.put("progress", progressText == null ? "" : progressText);
         String conversationId = String.valueOf(task.get("conversation_id"));
+        Map<String, Object> ctrl;
+        TaskPersistService db = persist();
+        if (db != null) {
+            ctrl = new LinkedHashMap<>(db.heartbeat(taskId, leaseToken));
+        } else {
+            ctrl = new LinkedHashMap<>(control.computeIfAbsent(taskId, id -> defaultControl()));
+        }
+        ctrl.put("progress", progressText == null ? "" : progressText);
         ctrl.put("queue_depth", messageQueue.getOrDefault(conversationId, List.of()).size());
         return ctrl;
     }
@@ -121,13 +219,23 @@ public class InMemoryTaskRuntime {
      * @param body       完成载荷
      */
     public void complete(String taskId, String leaseToken, Map<String, Object> body) {
-        assertLease(taskId, leaseToken);
-        Map<String, Object> task = leased.remove(taskId);
-        Map<String, Object> done = task == null ? new LinkedHashMap<>() : new LinkedHashMap<>(task);
+        Map<String, Object> task = assertLease(taskId, leaseToken);
+        leased.remove(taskId);
+        Map<String, Object> done = new LinkedHashMap<>(task);
         done.put("task_id", taskId);
         done.put("status", "COMPLETED");
         done.put("complete_body", body == null ? Map.of() : new LinkedHashMap<>(body));
         finished.put(taskId, done);
+        String conversationId = String.valueOf(task.getOrDefault("conversation_id", "c-unknown"));
+        Object summary = body == null ? null : body.get("summary");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("task_id", taskId);
+        payload.put("status", "COMPLETED");
+        if (summary != null) {
+            payload.put("summary", String.valueOf(summary));
+        }
+        sseHub.publish(conversationId, "task_done", payload);
+        persistRequired(p -> p.onComplete(done, body == null ? Map.of() : body));
         signalFinished();
     }
 
@@ -139,13 +247,28 @@ public class InMemoryTaskRuntime {
      * @param body       失败载荷
      */
     public void fail(String taskId, String leaseToken, Map<String, Object> body) {
-        assertLease(taskId, leaseToken);
-        Map<String, Object> task = leased.remove(taskId);
-        Map<String, Object> done = task == null ? new LinkedHashMap<>() : new LinkedHashMap<>(task);
+        Map<String, Object> task = assertLease(taskId, leaseToken);
+        leased.remove(taskId);
+        Map<String, Object> failBody = body == null ? Map.of() : new LinkedHashMap<>(body);
+        String errorCode = String.valueOf(failBody.getOrDefault("error_code", "FAILED"));
+        String status = switch (errorCode) {
+            case "PAUSED" -> "PAUSED";
+            case "CANCELLED" -> "CANCELLED";
+            default -> "FAILED";
+        };
+        Map<String, Object> done = new LinkedHashMap<>(task);
         done.put("task_id", taskId);
-        done.put("status", "FAILED");
-        done.put("fail_body", body == null ? Map.of() : new LinkedHashMap<>(body));
+        done.put("status", status);
+        done.put("fail_body", failBody);
         finished.put(taskId, done);
+        String conversationId = String.valueOf(task.getOrDefault("conversation_id", "c-unknown"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("task_id", taskId);
+        payload.put("status", status);
+        payload.put("error_code", errorCode);
+        payload.put("summary", String.valueOf(failBody.getOrDefault("message", failBody.getOrDefault("summary", ""))));
+        sseHub.publish(conversationId, "task_done", payload);
+        persistRequired(p -> p.onFail(done, status, failBody));
         signalFinished();
     }
 
@@ -156,9 +279,15 @@ public class InMemoryTaskRuntime {
      * @param reason 原因
      */
     public void requestCancel(String taskId, String reason) {
+        if (!isRunning(taskId) && findLeased(taskId).isEmpty()) {
+            throw InternalApiException.notFound("task not running: " + taskId);
+        }
         Map<String, Object> ctrl = control.computeIfAbsent(taskId, id -> defaultControl());
         ctrl.put("cancel_requested", true);
         ctrl.put("cancel_reason", reason == null ? "" : reason);
+        ctrl.put("pause_requested", false);
+        persistRequired(p -> p.onCancelRequested(taskId, reason));
+        publishControl(taskId, "cancel", reason);
     }
 
     /**
@@ -168,9 +297,120 @@ public class InMemoryTaskRuntime {
      * @param reason 原因
      */
     public void requestPause(String taskId, String reason) {
+        if (!isRunning(taskId) && findLeased(taskId).isEmpty()) {
+            throw InternalApiException.notFound("task not running: " + taskId);
+        }
         Map<String, Object> ctrl = control.computeIfAbsent(taskId, id -> defaultControl());
         ctrl.put("pause_requested", true);
         ctrl.put("pause_reason", reason == null ? "" : reason);
+        persistRequired(p -> p.onPauseRequested(taskId, reason));
+        publishControl(taskId, "pause", reason);
+    }
+
+    /**
+     * 从 PAUSED 终态续跑：新 task_id 领租约，但复用 LangGraph {@code graph_thread_id} 断点。
+     *
+     * @param taskId 已暂停任务
+     * @return 新任务
+     */
+    public Map<String, Object> resumePaused(String taskId) {
+        Map<String, Object> done = findFinished(taskId).orElse(null);
+        if (done == null) {
+            throw InternalApiException.notFound("task not finished: " + taskId);
+        }
+        if (!"PAUSED".equals(String.valueOf(done.get("status")))) {
+            throw InternalApiException.conflict("仅 PAUSED 任务可继续，当前=" + done.get("status"));
+        }
+        Map<String, Object> prevInput = done.get("input") instanceof Map<?, ?> m
+                ? new LinkedHashMap<>(castMap(m))
+                : new LinkedHashMap<>();
+        Map<String, Object> failBody = done.get("fail_body") instanceof Map<?, ?> fb
+                ? castMap(fb)
+                : Map.of();
+        String graphThreadId = firstNonBlank(
+                failBody.get("graph_thread_id"),
+                prevInput.get("graph_thread_id"),
+                taskId);
+        Map<String, Object> nextInput = new LinkedHashMap<>(prevInput);
+        nextInput.put("graph_thread_id", graphThreadId);
+        nextInput.put("resume_from_checkpoint", true);
+        nextInput.put("resumed_from_task_id", taskId);
+        Object pausedAt = failBody.get("paused_at");
+        if (pausedAt != null && !String.valueOf(pausedAt).isBlank()) {
+            nextInput.put("resume_after", String.valueOf(pausedAt));
+        }
+
+        Map<String, Object> draft = new LinkedHashMap<>();
+        draft.put("task_type", done.get("task_type"));
+        draft.put("conversation_id", done.get("conversation_id"));
+        draft.put("user_id", done.get("user_id"));
+        draft.put("run_id", done.get("run_id"));
+        draft.put("input", nextInput);
+        Map<String, Object> created = enqueue(draft);
+        String conversationId = String.valueOf(done.getOrDefault("conversation_id", "c-unknown"));
+        sseHub.publish(conversationId, "thinking", Map.of(
+                "stage", "task_resumed",
+                "title", "已从断点继续分析…",
+                "detail", "thread=" + graphThreadId + " task_id=" + created.get("task_id"),
+                "task_id", String.valueOf(created.get("task_id")),
+                "graph_thread_id", graphThreadId,
+                "resumed_from", taskId
+        ));
+        return created;
+    }
+
+    private static String firstNonBlank(Object... values) {
+        if (values == null) {
+            return "";
+        }
+        for (Object value : values) {
+            if (value == null) {
+                continue;
+            }
+            String text = String.valueOf(value).trim();
+            if (!text.isEmpty() && !"null".equalsIgnoreCase(text)) {
+                return text;
+            }
+        }
+        return "";
+    }
+
+    /**
+     * 控制事件推给会话 SSE。
+     *
+     * @param taskId 任务
+     * @param action pause/cancel
+     * @param reason 原因
+     */
+    private void publishControl(String taskId, String action, String reason) {
+        Map<String, Object> task = findLeased(taskId).orElse(null);
+        if (task == null) {
+            TaskPersistService db = persist();
+            if (db != null) {
+                task = db.loadRunning(taskId).orElse(null);
+            }
+        }
+        if (task == null) {
+            synchronized (this) {
+                for (Map<String, Object> item : queue) {
+                    if (taskId.equals(String.valueOf(item.get("task_id")))) {
+                        task = item;
+                        break;
+                    }
+                }
+            }
+        }
+        if (task == null) {
+            return;
+        }
+        String conversationId = String.valueOf(task.getOrDefault("conversation_id", "c-unknown"));
+        sseHub.publish(conversationId, "thinking", Map.of(
+                "stage", "control_" + action,
+                "title", "pause".equals(action) ? "已请求暂停…" : "已请求取消…",
+                "detail", reason == null ? "" : reason,
+                "task_id", taskId,
+                "control", action
+        ));
     }
 
     /**
@@ -194,7 +434,14 @@ public class InMemoryTaskRuntime {
      */
     public Optional<Map<String, Object>> findLeased(String taskId) {
         Map<String, Object> task = leased.get(taskId);
-        return task == null ? Optional.empty() : Optional.of(new LinkedHashMap<>(task));
+        if (task != null) {
+            return Optional.of(new LinkedHashMap<>(task));
+        }
+        TaskPersistService db = persist();
+        if (db != null) {
+            return db.loadLeased(taskId, null);
+        }
+        return Optional.empty();
     }
 
     /**
@@ -205,7 +452,41 @@ public class InMemoryTaskRuntime {
      */
     public Optional<Map<String, Object>> findFinished(String taskId) {
         Map<String, Object> task = finished.get(taskId);
-        return task == null ? Optional.empty() : Optional.of(new LinkedHashMap<>(task));
+        if (task != null) {
+            return Optional.of(new LinkedHashMap<>(task));
+        }
+        TaskPersistService db = persist();
+        if (db != null) {
+            return db.loadFinished(taskId);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * 任务是否仍在队列或已领取未结束。
+     *
+     * @param taskId 任务 ID
+     * @return true 表示还在跑
+     */
+    public boolean isRunning(String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            return false;
+        }
+        if (leased.containsKey(taskId)) {
+            return true;
+        }
+        TaskPersistService db = persist();
+        if (db != null) {
+            return db.isOpen(taskId);
+        }
+        synchronized (this) {
+            for (Map<String, Object> task : queue) {
+                if (taskId.equals(String.valueOf(task.get("task_id")))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -217,6 +498,26 @@ public class InMemoryTaskRuntime {
      */
     public Optional<Map<String, Object>> awaitFinished(String taskId, Duration timeout) {
         long deadline = System.nanoTime() + Math.max(timeout.toNanos(), 0);
+        TaskPersistService db = persist();
+        if (db != null) {
+            while (true) {
+                Optional<Map<String, Object>> done = db.loadFinished(taskId);
+                if (done.isPresent()) {
+                    finished.put(taskId, new LinkedHashMap<>(done.get()));
+                    return done;
+                }
+                long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (remainingMs <= 0) {
+                    return Optional.empty();
+                }
+                try {
+                    Thread.sleep(Math.min(200L, remainingMs));
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return Optional.empty();
+                }
+            }
+        }
         synchronized (finishedLock) {
             while (!finished.containsKey(taskId)) {
                 long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
@@ -242,13 +543,22 @@ public class InMemoryTaskRuntime {
 
     private Map<String, Object> assertLease(String taskId, String leaseToken) {
         Map<String, Object> task = leased.get(taskId);
-        if (task == null) {
+        if (task != null) {
+            if (leaseToken == null || !leaseToken.equals(String.valueOf(task.get("lease_token")))) {
+                throw InternalApiException.conflict("lease_token 不匹配");
+            }
+            return task;
+        }
+        TaskPersistService db = persist();
+        if (db != null) {
+            Optional<Map<String, Object>> loaded = db.loadLeased(taskId, leaseToken);
+            if (loaded.isPresent()) {
+                leased.put(taskId, new LinkedHashMap<>(loaded.get()));
+                return loaded.get();
+            }
             throw InternalApiException.notFound("task not leased: " + taskId);
         }
-        if (leaseToken == null || !leaseToken.equals(String.valueOf(task.get("lease_token")))) {
-            throw InternalApiException.conflict("lease_token 不匹配");
-        }
-        return task;
+        throw InternalApiException.notFound("task not leased: " + taskId);
     }
 
     private static Map<String, Object> defaultControl() {
@@ -259,6 +569,18 @@ public class InMemoryTaskRuntime {
         ctrl.put("pause_reason", "");
         ctrl.put("queue_depth", 0);
         return ctrl;
+    }
+
+    private TaskPersistService persist() {
+        return persistProvider.getIfAvailable();
+    }
+
+    private void persistRequired(java.util.function.Consumer<TaskPersistService> action) {
+        TaskPersistService persist = persist();
+        if (persist == null) {
+            return;
+        }
+        action.accept(persist);
     }
 
     private static String stringOr(Object value, String fallback) {

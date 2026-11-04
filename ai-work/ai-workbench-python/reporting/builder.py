@@ -1,4 +1,8 @@
-"""组装爆品可下载报表：优先 LLM 出带图 HTML，失败则 Chart.js 模板降级。"""
+"""组装爆品可下载报表。
+
+对话回复不依赖 HTML 正文；LLM 出 HTML 在系统代理下超时取消会卡住 Worker，
+因此固定用 Chart.js 模板，保证任务能 complete。
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,6 @@ from typing import Any
 from clients.llm_client import LlmClient
 from reporting.fallback_html import render_fallback_html
 from reporting.html_report import write_html_file
-from reporting.llm_html import generate_report_html_with_llm
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,11 @@ def _locked_payload(
                 "explosion_score": c.get("explosion_score"),
                 "quality_risk_level": c.get("quality_risk_level"),
                 "quality_rule_ids": c.get("quality_rule_ids"),
+                "action_bucket": c.get("action_bucket"),
+                "in_focus_slot": c.get("in_focus_slot"),
+                "primary_action": c.get("primary_action"),
                 "feature_excerpt": c.get("feature_excerpt"),
+                "metrics": c.get("metrics"),
             }
         )
     return {
@@ -113,17 +120,10 @@ async def build_explosion_report(
         snapshot_date=snapshot_date,
     )
 
+    html = render_fallback_html(locked)
     html_source = "template"
     if llm is not None and llm.enabled:
-        try:
-            html = await generate_report_html_with_llm(llm, locked)
-            html_source = "llm"
-        except Exception:
-            logger.exception("LLM HTML report failed; using Chart.js template fallback")
-            html = render_fallback_html(locked)
-            html_source = "template_fallback"
-    else:
-        html = render_fallback_html(locked)
+        logger.info("skip LLM HTML for task_id=%s; using Chart.js template", task_id)
 
     out_path = output_dir / f"{task_id}.html"
     write_html_file(out_path, html)

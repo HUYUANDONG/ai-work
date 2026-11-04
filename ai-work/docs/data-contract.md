@@ -59,19 +59,57 @@
 
 「向店铺均值收缩」指样本少时结果更接近全店平均，样本多时接近自身真实值，避免小样本 SKU 走极端。
 
-## 3. 批量特征查询
+## 3. 批量特征查询（按阶段投影）
 
-`POST /internal/features/query`
+Agent 分三阶段取数：**选品打分 → 轻量会签 →（可选）建议补数**。Java 按 `profile` 投影字段，禁止一次吐运营原始全字段。
 
-请求：`stat_date`（默认当天）、`on_sale_only`（默认 true）、可选 `category_id`、`sku_ids`（质检批量，上限 50）。
+任务入参 `include_advise`（默认 `false`，方案 B）：
 
-响应：`snapshot_date`、`row_count`、`items[]`（上表字段）。
+- `false`：只出榜单与销量证据，文末询问是否写投放建议；**不**调 `/features/advise`。
+- `true`（用户首句已明确要建议，或确认「要」后带新窗口重跑）：定槽后再调 advise，用 **LLM** 写投放建议（失败则模板降级）。
+- 用户仅回复「要」：对话同步拉 advise + LLM，不重跑全店打分。
+
+### 3.1 选品 / 打分：`POST /internal/features/query`
+
+请求：`stat_date`（默认当天）、`on_sale_only`（默认 true）、可选 `category_id`、`sku_ids`（质检批量，上限 50）、`user_id`、`time_window_days`、`profile`（默认 `score`）。
+
+`profile=score` 响应：
+
+- 信封：`snapshot_date` / `row_count` / `source` / `amount_unit`（元，挂响应级，不在每行重复）
+- `items[]` **只含**：
+
+| 字段 | 说明 |
+|---|---|
+| `sku_id` / `title` / `brand` | 身份；`title` 截断约 36 字；不上 `supplier_brand` |
+| `on_sale` | 是否在售 |
+| `gmv_30d` / `gmv_prev_30d` / `orders_30d` / `orders_prev_30d` | 销售窗口（整型） |
+| `impressions_30d` / `impressions_prev_30d` / `clicks_30d` / `clicks_prev_30d` | 流量窗口（对应 goodsPv/goodsUv，整型） |
+| `paid_orders_from_clicks_30d` | 支付用户数窗口（orderPays） |
+| `rate_per` | 页面转化率展示值（ratePer，两位小数，不作多日加总） |
+
+**不上送**：`goodsFirstPic`、`goodsLink`、`supBrandName`、原始 `goodsPv`/`goodsUv`/`orderSales` 别名堆、每行 `amount_unit`/`source`、板块/大盘。
 
 约束：
 
 - 筛选任务应 `on_sale_only=true` 且不传 2000 个 sku_ids。
+- **禁止**在 `load_features` 拉 `dailyPlateList` / `dailyDataList`。
 - 禁止在筛选流程里循环调用单 SKU 接口。
 - 单次响应约 2000 行可接受；超过 5000 行时再分页（当前规模不必做）。
+
+### 3.2 建议补数：`POST /internal/features/advise`
+
+仅在 `include_advise=true` 或用户确认要建议后调用。请求：`user_id`、可选 `sku_ids`（槽位内，通常 ≤5，作上下文标注）、可选 `days`（默认 7）。
+
+响应：
+
+| 字段 | 说明 |
+|---|---|
+| `plates[]` | `dailyPlateList` 精简：`stat_field` `stat_field_name` `self_pv` `self_uv` `order_sales` `order_numbers` |
+| `store` | 可选 `dailyDataList` 一行摘要：`total_sales` `order_numbers` `hpage_uv` `spu_uv` `conversion_rate` `stat_day` |
+| `sku_ids` | 回显请求槽位 |
+| `source` | `dailyPlateList` / `no_credentials` / `error` |
+
+用途：写「放哪块」建议；**不能**从板块推出具体商品是否已挂该板块。大盘只作背景一句，不可点名爆品。
 
 ## 4. 规则 ID（两端共用）
 

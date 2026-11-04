@@ -12,7 +12,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 @ConditionalOnProperty(name = "wb.mysql.enabled", havingValue = "true")
 @MapperScan({
         "cn.aiworkbench.service.workspace.mapper",
-        "cn.aiworkbench.service.conversation.mapper"
+        "cn.aiworkbench.service.conversation.mapper",
+        "cn.aiworkbench.service.persist.mapper"
 })
 @EnableTransactionManagement
 public class MysqlPersistenceConfiguration {

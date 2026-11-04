@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.aiworkbench.service.conversation.mapper.AiConversationMapper">
+
+    <select id="selectByConversationId"
+            resultType="cn.aiworkbench.service.conversation.infra.AiConversationDO">
+        SELECT id, conversation_id, user_id, title, session_state_json,
+               created_at, updated_at
+        FROM ai_conversation
+        WHERE conversation_id = #{conversationId}
+        LIMIT 1
+    </select>
+
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO ai_conversation (conversation_id, user_id, title, session_state_json)
+        VALUES (#{conversationId}, #{userId}, #{title}, #{sessionStateJson})
+    </insert>
+
+    <update id="updateSessionState">
+        UPDATE ai_conversation
+        SET session_state_json = #{sessionStateJson},
+            updated_at = CURRENT_TIMESTAMP(3)
+        WHERE conversation_id = #{conversationId}
+    </update>
+
+    <update id="touch">
+        UPDATE ai_conversation
+        SET updated_at = CURRENT_TIMESTAMP(3)
+        WHERE conversation_id = #{conversationId}
+    </update>
+
+    <select id="selectByUserId"
+            resultType="cn.aiworkbench.service.conversation.infra.AiConversationDO">
+        SELECT id, conversation_id, user_id, title, session_state_json,
+               created_at, updated_at
+        FROM ai_conversation
+        WHERE user_id = #{userId}
+        ORDER BY updated_at DESC, id DESC
+    </select>
+
+    <update id="updateTitle">
+        UPDATE ai_conversation
+        SET title = #{title},
+            updated_at = CURRENT_TIMESTAMP(3)
+        WHERE conversation_id = #{conversationId}
+    </update>
+
+    <delete id="deleteByConversationId">
+        DELETE FROM ai_conversation
+        WHERE conversation_id = #{conversationId}
+          AND user_id = #{userId}
+    </delete>
+
+</mapper>

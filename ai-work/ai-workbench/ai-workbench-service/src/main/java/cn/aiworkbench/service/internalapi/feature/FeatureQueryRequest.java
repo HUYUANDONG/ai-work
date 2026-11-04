@@ -24,4 +24,16 @@ public class FeatureQueryRequest {
 
     /** 指定 SKU 列表（质检批量 ≤50）。 */
     private List<String> skuIds;
+
+    /** 任务所属用户，用来取电商登录态。 */
+    private String userId;
+
+    /** 当前窗口天数，默认 30。 */
+    private Integer timeWindowDays;
+
+    /**
+     * 投影档：{@code score}（选品/打分，默认）不带板块/大盘。
+     * 建议阶段请走 {@code /internal/features/advise}。
+     */
+    private String profile = "score";
 }

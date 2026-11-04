@@ -26,12 +26,13 @@ public class TimeoutBudgetValidator implements ApplicationRunner, Ordered {
     @Override
     public void run(ApplicationArguments args) {
         timeoutBudgetProperties.validate();
-        log.info("timeout budget validated python={} java={} ecomMutation={} ecomQuery={} gateway={} streamIdle={} claim={}",
+        log.info("timeout budget validated python={} java={} ecomMutation={} ecomQuery={} gateway={} chat={} streamIdle={} claim={}",
                 timeoutBudgetProperties.getPythonExecuteOperation(),
                 timeoutBudgetProperties.getJavaExecuteOperation(),
                 timeoutBudgetProperties.getEcommerceMutation(),
                 timeoutBudgetProperties.getEcommerceQuery(),
                 timeoutBudgetProperties.getGatewayDefault(),
+                timeoutBudgetProperties.getGatewayChat(),
                 timeoutBudgetProperties.getGatewayStreamIdle(),
                 timeoutBudgetProperties.getClaimLongPoll());
     }

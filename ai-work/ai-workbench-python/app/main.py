@@ -3,7 +3,9 @@ FastAPI 启动入口（只负责 create_app，不含业务）。
 
 启动::
 
-    uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+    python -m app.main
+
+Windows 上必须先切到 SelectorEventLoop，否则 psycopg 异步连不上 Postgres。
 
 分层对照 Nest::
 
@@ -17,6 +19,14 @@ FastAPI 启动入口（只负责 create_app，不含业务）。
 
 浏览器 → Gateway → Java → 本服务 /internal/*
 """
+
+from __future__ import annotations
+
+import asyncio
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI
 
@@ -45,5 +55,12 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)
+    # uvicorn 在 Windows 上硬编码 ProactorEventLoop，psycopg 连不上 Postgres。
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8001,
+        reload=False,
+        loop="app.win_loop:selector_loop_factory",
+    )
 

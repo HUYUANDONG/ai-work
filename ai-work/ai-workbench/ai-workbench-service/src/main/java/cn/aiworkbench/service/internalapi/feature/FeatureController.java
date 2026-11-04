@@ -28,10 +28,22 @@ public class FeatureController {
      * @param request 条件
      * @return 快照行
      */
-    @Operation(summary = "批量特征 query")
+    @Operation(summary = "批量特征 query（profile=score）")
     @PostMapping("/features/query")
     public FeatureQueryResponse query(@RequestBody(required = false) FeatureQueryRequest request) {
         return featureService.query(request);
+    }
+
+    /**
+     * 建议阶段辅源：日板块流量 + 可选大盘。
+     *
+     * @param request 槽位与用户
+     * @return plates / store
+     */
+    @Operation(summary = "建议补数 advise（dailyPlateList）")
+    @PostMapping("/features/advise")
+    public FeatureAdviseResponse advise(@RequestBody(required = false) FeatureAdviseRequest request) {
+        return featureService.advise(request);
     }
 
     /**

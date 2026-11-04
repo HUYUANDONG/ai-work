@@ -5,7 +5,6 @@ import cn.aiworkbench.common.security.identity.AuthPrincipal;
 import cn.aiworkbench.common.security.identity.IdentityContext;
 import cn.aiworkbench.service.integration.ecommerce.LocalRecordingEcommerceAdapter;
 import cn.aiworkbench.service.workspace.api.dto.SaveProductDraftRequest;
-import cn.aiworkbench.service.workspace.domain.ProductDraftStatus;
 import cn.aiworkbench.service.workspace.domain.WorkspaceErrorCode;
 import cn.aiworkbench.service.workspace.infra.InMemoryProductDraftRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -16,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * 商品草稿确认发送用例。
+ * 上架商品 API 已暂时砍掉，公开用例一律拒绝。
  */
 class ProductDraftServiceTest {
 
@@ -34,41 +33,23 @@ class ProductDraftServiceTest {
     }
 
     @Test
-    void confirmPublishShouldCreateProductOnce() {
+    void createShouldRefuseWhileFeatureCut() {
         SaveProductDraftRequest request = new SaveProductDraftRequest();
         request.setProductNumber("PN-100");
         request.setTitle("登山包");
-        String id = service.create(request).getId();
-
-        var first = service.confirmPublish(id, true);
-        var second = service.confirmPublish(id, true);
-
-        assertEquals(ProductDraftStatus.SUCCEEDED, first.getStatus());
-        assertEquals("local-PN-100", first.getTargetId());
-        assertEquals(first.getTargetId(), second.getTargetId());
+        BizException ex = assertThrows(BizException.class, () -> service.create(request));
+        assertEquals(WorkspaceErrorCode.FEATURE_TEMPORARILY_CUT, ex.getErrorCode());
     }
 
     @Test
-    void confirmPublishShouldRejectWithoutConfirmation() {
-        SaveProductDraftRequest request = new SaveProductDraftRequest();
-        request.setProductNumber("PN-101");
-        request.setTitle("登山包");
-        String id = service.create(request).getId();
-
-        BizException ex = assertThrows(BizException.class, () -> service.confirmPublish(id, false));
-        assertEquals(WorkspaceErrorCode.CONFIRM_REQUIRED, ex.getErrorCode());
-        assertEquals(ProductDraftStatus.DRAFT, service.get(id).getStatus());
+    void confirmPublishShouldRefuseWhileFeatureCut() {
+        BizException ex = assertThrows(BizException.class, () -> service.confirmPublish("any", true));
+        assertEquals(WorkspaceErrorCode.FEATURE_TEMPORARILY_CUT, ex.getErrorCode());
     }
 
     @Test
-    void otherUserShouldNotSeeDraft() {
-        SaveProductDraftRequest request = new SaveProductDraftRequest();
-        request.setProductNumber("PN-102");
-        request.setTitle("登山包");
-        String id = service.create(request).getId();
-
-        IdentityContext.set(AuthPrincipal.builder().userId("u2").build());
-        BizException ex = assertThrows(BizException.class, () -> service.get(id));
-        assertEquals(WorkspaceErrorCode.DRAFT_NOT_FOUND, ex.getErrorCode());
+    void listMineShouldRefuseWhileFeatureCut() {
+        BizException ex = assertThrows(BizException.class, () -> service.listMine());
+        assertEquals(WorkspaceErrorCode.FEATURE_TEMPORARILY_CUT, ex.getErrorCode());
     }
 }

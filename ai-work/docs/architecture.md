@@ -24,7 +24,8 @@ ai-workbench-service
 ```
 
 职责：Java 是 Workbench；Python 是一套 Harness。  
-V1：**无跨任务全局指挥**；对话入口 + 代码路由。**Explosion 任务内**有作战指挥与会签 multi-agent。详见 [agents/harness.md](agents/harness.md)、[agents/explosion-agent.md](agents/explosion-agent.md)。
+V1：Chat 手写入口 + `TaskAgent` 注册表；**Explosion 内**用 `ExplosionSupervisor` 编排本仓 Signal/Risk/Strategy（学参考项目编排思路，不搬其业务 Agent）。  
+**无**跨 `task_type` 自动派活。详见 [agents/harness.md](agents/harness.md)、[agents/explosion-agent.md](agents/explosion-agent.md)。
 
 Python 仓目录分层（Controller / Service 心智）见 [python-package-layout.md](python-package-layout.md)。
 

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.aiworkbench.service.persist.mapper.AiTaskMapper">
+
+    <insert id="upsertQueued">
+        INSERT INTO ai_task (
+            task_id, task_type, task_status, user_id, merchant_id, conversation_id,
+            thread_id, current_run_id, lease_token, input_json, next_action,
+            workflow_version, idempotency_key
+        ) VALUES (
+            #{taskId}, #{taskType}, #{taskStatus}, #{userId}, #{merchantId}, #{conversationId},
+            #{threadId}, #{currentRunId}, #{leaseToken}, #{inputJson}, #{nextAction},
+            #{workflowVersion}, #{idempotencyKey}
+        )
+        ON DUPLICATE KEY UPDATE
+            task_type = VALUES(task_type),
+            task_status = 'QUEUED',
+            input_json = VALUES(input_json),
+            next_action = VALUES(next_action),
+            thread_id = VALUES(thread_id),
+            current_run_id = VALUES(current_run_id),
+            lease_token = VALUES(lease_token),
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            cancel_requested_at = NULL,
+            cancel_reason = NULL,
+            pause_requested_at = NULL,
+            pause_reason = NULL,
+            finished_at = NULL,
+            error_code = NULL,
+            error_message = NULL,
+            available_at = CURRENT_TIMESTAMP(3)
+    </insert>
+
+    <!-- foreach：动态 IN 列表；SKIP LOCKED：多 Worker 互不抢同一行 -->
+    <select id="lockClaimable" resultType="cn.aiworkbench.service.persist.infra.AiTaskDO">
+        SELECT task_id, task_type, task_status, user_id, merchant_id, conversation_id,
+               thread_id, current_run_id, lease_token, lease_owner, input_json, next_action,
+               workflow_version, result_json, error_code, error_message,
+               pause_reason, cancel_reason, pause_requested_at, cancel_requested_at
+        FROM ai_task
+        WHERE task_type IN
+        <foreach item="t" collection="types" open="(" separator="," close=")">
+            #{t}
+        </foreach>
+          AND (
+                task_status = 'QUEUED'
+             OR (task_status = 'RUNNING'
+                 AND (lease_expires_at IS NULL OR lease_expires_at &lt; CURRENT_TIMESTAMP(3)))
+          )
+        ORDER BY priority DESC, available_at ASC, id ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <update id="markRunning">
+        UPDATE ai_task
+        SET task_status = 'RUNNING',
+            current_run_id = #{runId},
+            lease_token = #{leaseToken},
+            lease_owner = #{workerId},
+            workflow_version = #{workflow},
+            last_heartbeat_at = CURRENT_TIMESTAMP(3),
+            lease_expires_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{leaseSeconds} SECOND),
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP(3)),
+            attempt_count = attempt_count + 1
+        WHERE task_id = #{taskId}
+    </update>
+
+    <update id="heartbeat">
+        UPDATE ai_task
+        SET last_heartbeat_at = CURRENT_TIMESTAMP(3),
+            lease_expires_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{leaseSeconds} SECOND)
+        WHERE task_id = #{taskId}
+          AND lease_token = #{leaseToken}
+    </update>
+
+    <update id="markCancelRequested">
+        UPDATE ai_task
+        SET cancel_requested_at = CURRENT_TIMESTAMP(3),
+            cancel_reason = #{reason},
+            pause_requested_at = NULL
+        WHERE task_id = #{taskId}
+    </update>
+
+    <update id="markPauseRequested">
+        UPDATE ai_task
+        SET pause_requested_at = CURRENT_TIMESTAMP(3),
+            pause_reason = #{reason}
+        WHERE task_id = #{taskId}
+    </update>
+
+    <select id="selectByTaskId" resultType="cn.aiworkbench.service.persist.infra.AiTaskDO">
+        SELECT task_id, task_type, task_status, user_id, merchant_id, conversation_id,
+               thread_id, current_run_id, lease_token, lease_owner, input_json, next_action,
+               workflow_version, result_json, error_code, error_message,
+               pause_reason, cancel_reason, pause_requested_at, cancel_requested_at
+        FROM ai_task
+        WHERE task_id = #{taskId}
+        LIMIT 1
+    </select>
+
+    <update id="markFinished">
+        UPDATE ai_task
+        SET task_status = #{taskStatus},
+            result_json = #{resultJson},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            finished_at = CURRENT_TIMESTAMP(3),
+            lease_token = NULL,
+            lease_owner = NULL
+        WHERE task_id = #{taskId}
+    </update>
+
+</mapper>

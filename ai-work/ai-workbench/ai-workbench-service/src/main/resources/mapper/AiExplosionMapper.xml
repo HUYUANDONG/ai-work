@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+  namespace 必须等于接口全限定名；每个 id 对应接口里同名方法。
+  #{taskId} 与接口 @Param("taskId") 对齐，预编译防注入。
+-->
+<mapper namespace="cn.aiworkbench.service.persist.mapper.AiExplosionMapper">
+
+    <insert id="upsertHeader">
+        INSERT INTO ai_explosion_analysis (
+            task_id, user_id, conversation_id, snapshot_date, scoring_version, council_version,
+            time_window_days, top_n, item_count, goal_mode, focus_slots, plan_degraded,
+            focus_count, summary, header_json
+        ) VALUES (
+            #{taskId}, #{userId}, #{conversationId}, #{snapshotDate}, #{scoringVersion}, #{councilVersion},
+            #{timeWindowDays}, #{topN}, #{itemCount}, #{goalMode}, #{focusSlots}, #{planDegraded},
+            #{focusCount}, #{summary}, #{headerJson}
+        )
+        ON DUPLICATE KEY UPDATE
+            user_id = VALUES(user_id),
+            conversation_id = VALUES(conversation_id),
+            snapshot_date = VALUES(snapshot_date),
+            scoring_version = VALUES(scoring_version),
+            council_version = VALUES(council_version),
+            time_window_days = VALUES(time_window_days),
+            top_n = VALUES(top_n),
+            item_count = VALUES(item_count),
+            goal_mode = VALUES(goal_mode),
+            focus_slots = VALUES(focus_slots),
+            plan_degraded = VALUES(plan_degraded),
+            focus_count = VALUES(focus_count),
+            summary = VALUES(summary),
+            header_json = VALUES(header_json)
+    </insert>
+
+    <delete id="deleteItems">
+        DELETE FROM ai_explosion_item WHERE task_id = #{taskId}
+    </delete>
+
+    <insert id="upsertItem">
+        INSERT INTO ai_explosion_item (
+            task_id, sku_id, rank_no, explosion_score, action_bucket, primary_action,
+            in_focus_slot, quality_risk_level, feature_excerpt, council_excerpt, ai_reason
+        ) VALUES (
+            #{taskId}, #{skuId}, #{rankNo}, #{score}, #{bucket}, #{action},
+            #{inSlot}, #{risk}, #{excerpt}, #{council}, #{reason}
+        )
+        ON DUPLICATE KEY UPDATE
+            rank_no = VALUES(rank_no),
+            explosion_score = VALUES(explosion_score),
+            action_bucket = VALUES(action_bucket),
+            primary_action = VALUES(primary_action),
+            in_focus_slot = VALUES(in_focus_slot),
+            quality_risk_level = VALUES(quality_risk_level),
+            feature_excerpt = VALUES(feature_excerpt),
+            council_excerpt = VALUES(council_excerpt),
+            ai_reason = VALUES(ai_reason)
+    </insert>
+
+    <select id="listHeaders" resultType="map">
+        SELECT task_id, user_id, conversation_id, snapshot_date, scoring_version, council_version,
+               time_window_days, top_n, item_count, goal_mode, focus_slots, plan_degraded,
+               focus_count, summary, header_json, created_at
+        FROM ai_explosion_analysis
+        WHERE conversation_id = #{conversationId}
+          AND (user_id = #{userId} OR user_id IS NULL)
+        ORDER BY created_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listItems" resultType="map">
+        SELECT sku_id, rank_no, explosion_score, action_bucket, primary_action,
+               in_focus_slot, quality_risk_level, feature_excerpt, council_excerpt, ai_reason
+        FROM ai_explosion_item
+        WHERE task_id = #{taskId}
+        ORDER BY rank_no IS NULL, rank_no ASC
+    </select>
+
+</mapper>

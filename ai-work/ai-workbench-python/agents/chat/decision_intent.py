@@ -39,15 +39,18 @@ INTENT_CRITERIA: dict[str, str] = {
     "FOLLOWUP": (
         "追问上一份分析结果：为什么排第几、分数什么意思、建议怎么理解。"
         "不是新开全店任务，也不是只改时间窗/目标/槽位。"
+        "Session phase=AWAITING_ADVISE_CONFIRM 时，非「要/不用」的追问也属 FOLLOWUP。"
     ),
     "META": "问助手能做什么、怎么用、口径或政策。",
     "OUT_OF_SCOPE": (
-        "写代码、爬虫、改价上下架、外网竞品、闲聊等本工作台做不了的事。"
+        "写代码、爬虫、改价上下架、上架商品、一键发圈/发朋友圈、外网竞品、闲聊等本工作台做不了的事。"
+        "上架与发圈已暂时砍掉，即使用户点名要求也是 OUT_OF_SCOPE。"
     ),
     "CLARIFY": (
         "爆品 / 质检 / 单品深挖之间含糊，或缺关键信息必须先问一句。"
         "「近7天爆品」「筛爆品」不是 CLARIFY。"
         "上一轮已是筛爆品/质检时，只改近7天/目标/槽位也不要 CLARIFY。"
+        "Session phase=AWAITING_ADVISE_CONFIRM 时不要 CLARIFY 成新任务。"
     ),
 }
 
@@ -198,7 +201,7 @@ def _run_decision_sync(
             },
         },
     }
-    with httpx.Client(timeout=15.0) as client:
+    with httpx.Client(timeout=15.0, trust_env=False) as client:
         response = client.post(
             endpoint,
             headers={
@@ -309,7 +312,7 @@ def _run_qwen_intent_sync(
         ],
     }
     url = f"{chat_base_url.rstrip('/')}/chat/completions"
-    with httpx.Client(timeout=20.0) as client:
+    with httpx.Client(timeout=20.0, trust_env=False) as client:
         response = client.post(
             url,
             headers={
@@ -330,15 +333,15 @@ def _run_qwen_intent_sync(
     return _parse_qwen_intent(content)
 
 
-def _format_history(history: list[dict] | None, *, limit: int = 6) -> str:
-    """把最近若干轮压成短文本给决策模型。"""
+def _format_history(history: list[dict] | None, *, limit: int = 4) -> str:
+    """把最近若干轮压成短文本给决策模型（业界常用短上下文，非全文报告）。"""
     rows: list[str] = []
     for item in (history or [])[-limit:]:
         role = str(item.get("role") or "user")
         content = str(item.get("content") or "").replace("\n", " ").strip()
         if not content:
             continue
-        rows.append(f"{role}: {content[:200]}")
+        rows.append(f"{role}: {content[:120]}")
     return "\n".join(rows)
 
 
@@ -353,6 +356,7 @@ async def classify_with_decision(
     region: str = DEFAULT_REGION,
     history: list[dict] | None = None,
     last_intent: str | None = None,
+    session_state: dict | None = None,
     chat_base_url: str = "",
     chat_model: str = "qwen-plus",
 ) -> IntentDecision:
@@ -369,21 +373,26 @@ async def classify_with_decision(
         region: 地域。
         history: 本会话最近轮次。
         last_intent: 上一轮任务意图。
+        session_state: 显式会话相位快照（``build_router_snapshot``）。
         chat_base_url: 千问 Chat Completions 根路径。
         chat_model: 千问模型名。
 
     Returns:
         IntentDecision: 最终用于路由的意图。
     """
+    from harness.memory.dialog_state import format_router_state
+
     history_text = _format_history(history)
-    pending = f"Last pending task intent: {last_intent}\n" if last_intent else ""
+    session_block = format_router_state(session_state)
     state = (
         "Workbench capabilities: explosion campaign from SKU window metrics; "
         "quality inspection. Not for coding, listing, or external crawl.\n"
+        "Routing policy: rule gates first; then classify with session phase; "
+        "do not invent scores; expensive advise is a separate step.\n"
         "If the user only supplies a time window / goal / slot count after an "
         "explosion or quality turn, keep that previous intent.\n"
-        f"{pending}"
-        f"Recent conversation:\n{history_text or '(empty)'}\n"
+        f"{session_block}\n"
+        f"Recent conversation (truncated):\n{history_text or '(empty)'}\n"
         f"User message:\n{(message or '').strip()}"
     )
     if _use_systemone(base_url=base_url, workspace_id=workspace_id):
@@ -536,11 +545,12 @@ async def resolve_intent(
     region: str = DEFAULT_REGION,
     history: list[dict] | None = None,
     last_intent: str | None = None,
+    session_state: dict | None = None,
     chat_base_url: str = "",
     chat_model: str = "qwen-plus",
 ) -> IntentDecision:
     """
-    统一入口：有 Workspace 走决策模型，否则千问封闭分类，再不行规则降级。
+    统一入口：意图只走大模型（决策模型 / 千问），不做关键词事后纠偏。
 
     Args:
         message: 用户原文。
@@ -548,12 +558,13 @@ async def resolve_intent(
         enabled: 是否启用决策模型。
         model: 模型名。
         min_confidence: 置信度门槛。
-        allow_rules_fallback: 无 Key 或调用失败时是否用规则。
+        allow_rules_fallback: 仅无 Key / 调用失败时是否用规则兜底；默认应 false。
         base_url: 可选网关覆盖。
         workspace_id: 百炼业务空间 ID。
         region: 地域。
         history: 本会话最近轮次。
-        last_intent: 上一轮任务意图。
+        last_intent: 上一轮任务意图（供模型上下文，不本地改写结果）。
+        session_state: 显式会话相位快照。
         chat_base_url: 千问 Chat Completions 根路径。
         chat_model: 千问模型名。
 
@@ -562,11 +573,7 @@ async def resolve_intent(
     """
     if not enabled or not (api_key or "").strip():
         if allow_rules_fallback:
-            return continue_previous_task(
-                classify_with_rules_fallback(message, last_intent=last_intent),
-                message,
-                last_intent,
-            )
+            return classify_with_rules_fallback(message, last_intent=last_intent)
         return IntentDecision(
             intent="CLARIFY",
             confidence=0.0,
@@ -575,7 +582,7 @@ async def resolve_intent(
         )
 
     try:
-        decision = await classify_with_decision(
+        return await classify_with_decision(
             message,
             api_key=api_key,
             model=model,
@@ -585,27 +592,19 @@ async def resolve_intent(
             region=region,
             history=history,
             last_intent=last_intent,
+            session_state=session_state,
             chat_base_url=chat_base_url,
             chat_model=chat_model,
-        )
-        return overlay_keyword_intent(
-            continue_previous_task(decision, message, last_intent),
-            message,
-            last_intent,
         )
     except Exception as exc:  # noqa: BLE001 — 降级路径需吞掉并记录
         logger.exception("Decision model intent classification failed: %s", exc)
         if allow_rules_fallback:
             fb = classify_with_rules_fallback(message, last_intent=last_intent)
-            return continue_previous_task(
-                IntentDecision(
-                    intent=fb.intent,
-                    confidence=0.0,
-                    source="rules_fallback_after_error",
-                    error=str(exc),
-                ),
-                message,
-                last_intent,
+            return IntentDecision(
+                intent=fb.intent,
+                confidence=0.0,
+                source="rules_fallback_after_error",
+                error=str(exc),
             )
         return IntentDecision(
             intent="CLARIFY",

@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from harness.memory.tokens import TokenBudget, estimate_tokens
+from harness.memory.tokens import TokenBudget
 
 
 @dataclass
@@ -37,6 +37,12 @@ class SessionMemory:
         constraints: 约束（错误决策可 supersede）。
         last_intent: 上一轮任务意图（EXPLOSION/QUALITY）。
         last_task_input: 上一轮任务入参，供短句补参叠加。
+        advice_offer_pending: 爆品榜单已出，等待用户确认是否写投放建议。
+        awaiting_clarify: 上一轮返回了 clarify_pending。
+        last_report_task_id: 最近完成任务。
+        episodes: 已完成任务短摘要。
+        ops_phase: 运营流水线相位（IDLE / 等建议 / 等文案 / DONE）。
+        ops_context: 运营流水线中间态（candidates / inventory 等）。
     """
 
     conversation_id: str
@@ -46,6 +52,44 @@ class SessionMemory:
     constraints: list[Constraint] = field(default_factory=list)
     last_intent: str | None = None
     last_task_input: dict[str, Any] = field(default_factory=dict)
+    advice_offer_pending: bool = False
+    awaiting_clarify: bool = False
+    last_report_task_id: str | None = None
+    episodes: list[dict[str, Any]] = field(default_factory=list)
+    # 摘要已覆盖到的最大消息 id；Java 据此只回放之后的原文
+    summary_through_message_id: int | None = None
+    ops_phase: str = "IDLE"
+    ops_context: dict[str, Any] = field(default_factory=dict)
+
+    def add_episode(self, episode: dict[str, Any], *, keep: int = 8) -> None:
+        """追加任务 episode，去重同 task_id。"""
+        task_id = str(episode.get("task_id") or "")
+        if task_id:
+            self.episodes = [e for e in self.episodes if str(e.get("task_id") or "") != task_id]
+            self.last_report_task_id = task_id
+        self.episodes.append(dict(episode))
+        if len(self.episodes) > keep:
+            self.episodes = self.episodes[-keep:]
+
+    def router_snapshot(
+        self,
+        *,
+        active_task_id: str | None = None,
+        queue_message: bool = False,
+        last_intent_override: str | None = None,
+    ) -> dict[str, Any]:
+        """决策路由用的短状态快照。"""
+        from harness.memory.dialog_state import build_router_snapshot
+
+        return build_router_snapshot(
+            last_intent=last_intent_override or self.last_intent,
+            last_task_input=self.last_task_input,
+            advice_offer_pending=self.advice_offer_pending,
+            awaiting_clarify=self.awaiting_clarify,
+            active_task_id=active_task_id,
+            queue_message=queue_message,
+            ops_phase=self.ops_phase,
+        )
 
     def add_turn(
         self,
@@ -55,14 +99,31 @@ class SessionMemory:
         intent: str | None = None,
         keep_last: int = 12,
     ) -> None:
-        """追加一轮，超出 keep_last 的进入待压缩区（由 compact 处理）。"""
+        """
+        追加一轮原文。
+
+        不再按条数静默丢掉旧轮；过长时由 ``deep_summarize_if_needed`` 用 LLM 压缩。
+        ``keep_last`` 仅保留兼容参数，无截断语义。
+        """
+        del keep_last  # 兼容旧调用方，避免静默截断
         item: dict[str, Any] = {"role": role, "content": content}
         if intent:
             item["intent"] = intent
         self.working.append(item)
-        # 软上限：留给 compact 决定
-        if len(self.working) > keep_last * 2:
-            self.working = self.working[-(keep_last * 2) :]
+
+    def add_turn_item(self, item: dict[str, Any], *, keep_last: int = 12) -> None:
+        """追加完整 history 项（保留 id，供摘要水位）。"""
+        del keep_last
+        role = str(item.get("role") or "user")
+        content = str(item.get("content") or "")
+        if not content:
+            return
+        row: dict[str, Any] = {"role": role, "content": content}
+        if item.get("id") is not None:
+            row["id"] = item.get("id")
+        if item.get("intent"):
+            row["intent"] = item.get("intent")
+        self.working.append(row)
 
     def add_archive(self, ref: str, meta: dict[str, Any] | None = None) -> None:
         """追加不可变归档指针。"""
@@ -83,40 +144,17 @@ class SessionMemory:
 
     def compact_working(self, *, keep_last: int = 8, budget: TokenBudget | None = None) -> dict[str, Any]:
         """
-        确定性压缩：尾部保留，更早部分折叠进 summary（不调用 LLM）。
+        已废弃截断式压缩。
 
-        Returns:
-            dict: compacted / dropped_turns / summary_chars。
+        请改用 ``harness.memory.summarize.deep_summarize_if_needed``（LLM、高水位才触发）。
+        本方法保留为空操作，避免旧调用方再静默丢对话。
         """
-        keep_last = max(2, keep_last)
-        if len(self.working) <= keep_last:
-            return {"compacted": False, "dropped_turns": 0, "summary_chars": len(self.summary)}
-
-        old, self.working = self.working[:-keep_last], self.working[-keep_last:]
-        bullets = []
-        for m in old:
-            role = m.get("role", "?")
-            content = (m.get("content") or "").replace("\n", " ")
-            bullets.append(f"- {role}: {content[:120]}")
-        chunk = "\n".join(bullets)
-        # 禁止对 summary 再摘要：只原文追加搬运
-        if self.summary:
-            self.summary = self.summary.rstrip() + "\n" + chunk
-        else:
-            self.summary = "[Earlier turns]\n" + chunk
-
-        # 预算裁剪 summary 尾部优先保留（新的更重要）
-        if budget is not None:
-            max_sum = min(2000, budget.input_limit // 8)
-            while estimate_tokens(self.summary) > max_sum and "\n" in self.summary:
-                # 丢掉最旧行
-                parts = self.summary.split("\n")
-                self.summary = "\n".join(parts[1:])
-
+        del keep_last, budget
         return {
-            "compacted": True,
-            "dropped_turns": len(old),
+            "compacted": False,
+            "dropped_turns": 0,
             "summary_chars": len(self.summary),
+            "skipped_reason": "use_deep_summarize_if_needed",
         }
 
     def build_prompt_layers(
@@ -142,6 +180,20 @@ class SessionMemory:
             )
         if facts_text:
             parts_sys.append(facts_text)
+        if self.episodes:
+            lines = []
+            for ep in self.episodes[-5:]:
+                tid = ep.get("task_id") or "?"
+                kind = ep.get("task_type") or ""
+                text = str(ep.get("summary") or "")[:160]
+                extra = []
+                if ep.get("goal_mode"):
+                    extra.append(str(ep.get("goal_mode")))
+                if ep.get("time_window_days"):
+                    extra.append(f"{ep.get('time_window_days')}d")
+                suffix = f" ({', '.join(extra)})" if extra else ""
+                lines.append(f"- {kind} {tid}{suffix}: {text}")
+            parts_sys.append("[Episodes]\n" + "\n".join(lines))
         if self.archives:
             refs = ", ".join(a.get("ref", "") for a in self.archives[-5:])
             parts_sys.append(f"[Archives] {refs}")
@@ -149,34 +201,27 @@ class SessionMemory:
         sys_text = "\n\n".join(parts_sys)
         committed = b.sized(sys_text)
 
-        # working + summary 填入 user 侧上下文
+        # 对话原文与摘要整段保留，不再中途截断；过长应先走 LLM 深度摘要
         ctx_chunks: list[str] = []
         if self.summary:
             ctx_chunks.append(self.summary)
         for m in self.working:
             ctx_chunks.append(f"{m.get('role')}: {m.get('content')}")
-
-        user_body = ""
-        truncated = False
-        for chunk in ctx_chunks:
-            trial = (user_body + "\n" + chunk).strip()
-            need = b.sized(trial) + b.sized(question) + 64
-            if committed + need > b.input_limit:
-                truncated = True
-                break
-            user_body = trial
+        user_body = "\n".join(ctx_chunks).strip()
 
         user = ""
         if user_body:
             user += "[Context]\n" + user_body + "\n\n"
         user += "[Question]\n" + question
         committed += b.sized(user)
+        over_budget = committed > b.input_limit
         return {
             "system": sys_text,
             "user": user,
             "committed_tokens": committed,
             "input_limit": b.input_limit,
-            "truncated": truncated,
+            "truncated": False,
+            "over_budget": over_budget,
         }
 
 

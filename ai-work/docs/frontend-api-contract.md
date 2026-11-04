@@ -55,7 +55,7 @@ Python 必须 `--host 0.0.0.0 --port 8001`，只绑 `127.0.0.1` 时 Java 跨机�
 {
   "conversation_id": "c-1",
   "user_id": "u-1",
-  "message": "帮我写一条发圈文案",
+  "message": "近7天爆品",
   "history": [
     { "role": "user", "content": "上一轮用户" },
     { "role": "assistant", "content": "上一轮回复" }
@@ -106,9 +106,11 @@ Python 必须 `--host 0.0.0.0 --port 8001`，只绑 `127.0.0.1` 时 Java 跨机�
 
 | 能力 | Java 路径 | 说明 |
 |---|---|---|
-| 新建/列会话 | `/api/v1/conversations/*` | 已有接口；Vue 仍用 localStorage |
-| 思考流 SSE | `/api/v1/conversations/*/stream` | Gateway 已配路由，页面未接 |
-| 一键发圈 | — | 复制文案，发布通道未接 |
+| 新建/列会话 | `/api/v1/conversations/*` | `wb_conversation` 窗口列表；对话正文/LTM 槽位在 `ai_message` + `ai_conversation.session_state_json`（需 `WB_MYSQL_ENABLED=true`） |
+| 对话记忆 | ChatBridge 内 | STM：最近 8 轮；LTM：last_intent / last_task / advice_offer_pending；无向量 |
+| 思考流 SSE | `/api/v1/conversations/{id}/stream` | 事件：`ready` / `thinking` / `llm_delta` / `reply` / `task_done` / `done`；对话页已接 |
+| 一键发圈 | — | **已暂时砍掉**（对话判 OUT_OF_SCOPE） |
+| 上架商品 / product-drafts | `/api/v1/product-drafts/*` | **已暂时砍掉**（返回 `WORKSPACE_FEATURE_TEMPORARILY_CUT` / HTTP 410） |
 
 ## 5. 探活
 

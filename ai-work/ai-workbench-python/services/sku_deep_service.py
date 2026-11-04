@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents.chat.sku_deep import analyze_sku
+from agents.sku_deep.analyze import analyze_sku
 from harness.runtime import AppRuntime
 
 

@@ -16,6 +16,13 @@ from uuid import uuid4
 
 import httpx
 
+from harness.resilience import (
+    SlidingWindowCircuitBreaker,
+    call_with_retry,
+    http_status_is_transient,
+    is_transient_http_error,
+)
+
 logger = logging.getLogger(__name__)
 
 WORKFLOW_VERSION = "explosion-quality-1.0.0"
@@ -29,6 +36,8 @@ class JavaClient:
         base_url: Service 内网 Base URL。
         mock_features: True 时不访问网络。
         timeout: HTTP 超时秒。
+        max_attempts: 瞬时故障总尝试次数（含首次）。
+        breaker: 滑动窗口熔断器（仅真实 HTTP）。
     """
 
     def __init__(
@@ -37,16 +46,22 @@ class JavaClient:
         *,
         mock_features: bool = True,
         timeout: float = 30.0,
+        max_attempts: int = 2,
+        breaker: SlidingWindowCircuitBreaker | None = None,
     ) -> None:
         """
         Args:
             base_url: Java Service Base URL。
             mock_features: 是否本地 mock。
             timeout: 请求超时。
+            max_attempts: 瞬时故障总尝试次数。
+            breaker: 可选熔断器。
         """
         self.base_url = base_url.rstrip("/")
         self.mock_features = mock_features
         self.timeout = timeout
+        self.max_attempts = max(1, max_attempts)
+        self.breaker = breaker or SlidingWindowCircuitBreaker(name="java-http")
         # mock 状态
         self._mock_task_queue: list[dict[str, Any]] = []
         self._mock_reports_by_conversation: dict[str, list[dict[str, Any]]] = {}
@@ -71,16 +86,42 @@ class JavaClient:
         json_body: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> httpx.Response:
+        """
+        真实 HTTP；瞬时 429/5xx 与连接错误走退避重试，并计入熔断窗口。
+
+        超时不重试。4xx（非 429）视为服务可达，记成功。
+        """
         url = f"{self.base_url}{path}"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.request(
-                method,
-                url,
-                headers=self._headers(),
-                json=json_body,
-                params=params,
+
+        async def _once() -> httpx.Response:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+                resp = await client.request(
+                    method,
+                    url,
+                    headers=self._headers(),
+                    json=json_body,
+                    params=params,
+                )
+            if http_status_is_transient(resp.status_code):
+                # 让 call_with_retry 记失败并决定是否再试
+                raise httpx.HTTPStatusError(
+                    f"transient HTTP {resp.status_code}",
+                    request=resp.request,
+                    response=resp,
+                )
+            return resp
+
+        try:
+            return await call_with_retry(
+                _once,
+                max_attempts=self.max_attempts,
+                breaker=self.breaker,
+                is_retryable=is_transient_http_error,
+                label=f"java.{method} {path}",
             )
-        return resp
+        except httpx.HTTPStatusError as exc:
+            # 重试用尽：仍把最后一次响应交给上层 raise_for_status
+            return exc.response
 
     # ----- features -----
 
@@ -100,8 +141,52 @@ class JavaClient:
         resp = await self._request("POST", "/internal/features/query", json_body=body)
         resp.raise_for_status()
         data = resp.json()
-        data.setdefault("mock", False)
+        data.setdefault("mock", data.get("source") == "fixture")
         return data
+
+    async def query_advise(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        建议补数（``POST /internal/features/advise``）。
+
+        Args:
+            body: user_id / sku_ids / days。
+
+        Returns:
+            dict: plates / store / source。
+        """
+        if self.mock_features:
+            return {
+                "sku_ids": list(body.get("sku_ids") or []),
+                "plates": [
+                    {
+                        "stat_field": "mock-home",
+                        "stat_field_name": "首页爆款位",
+                        "self_pv": 1200,
+                        "self_uv": 480,
+                        "order_sales": 3200,
+                        "order_numbers": 18,
+                    },
+                    {
+                        "stat_field": "mock-act",
+                        "stat_field_name": "活动坑位",
+                        "self_pv": 800,
+                        "self_uv": 260,
+                        "order_sales": 1500,
+                        "order_numbers": 9,
+                    },
+                ],
+                "store": {
+                    "total_sales": 50000,
+                    "order_numbers": 120,
+                    "hpage_uv": 8000,
+                    "conversion_rate": 1.5,
+                },
+                "source": "fixture",
+                "mock": True,
+            }
+        resp = await self._request("POST", "/internal/features/advise", json_body=body)
+        resp.raise_for_status()
+        return resp.json()
 
     async def get_product_features(
         self,
@@ -143,6 +228,139 @@ class JavaClient:
         )
         if resp.status_code == 404:
             raise LookupError(f"sku not found: {sku_id}")
+        resp.raise_for_status()
+        data = resp.json()
+        data.setdefault("mock", False)
+        return data
+
+    async def get_product_detail(self, sku_id: str) -> dict[str, Any]:
+        """
+        商品详情（正式接口未就绪时 mock）。
+
+        Args:
+            sku_id: SKU。
+
+        Returns:
+            dict: title / selling_points / specs / mock。
+        """
+        sid = str(sku_id)
+        if self.mock_features:
+            try:
+                feat = await self.get_product_features(sid)
+                item = dict(feat.get("item") or {})
+            except LookupError:
+                item = {"sku_id": sid, "title": f"商品-{sid}"}
+            title = str(item.get("title") or item.get("goodsName") or f"商品-{sid}")
+            return {
+                "sku_id": sid,
+                "title": title,
+                "selling_points": [
+                    "店铺主推款",
+                    f"近窗销量信号见特征（orderSales={item.get('orderSales')}）",
+                    "支持七天无理由（mock）",
+                ],
+                "specs": {
+                    "brand": item.get("brand") or item.get("gbName") or "未知品牌",
+                    "price": item.get("price"),
+                    "cost": item.get("cost"),
+                },
+                "mock": True,
+                "source": "fixture",
+            }
+        resp = await self._request("GET", f"/internal/products/{sid}/detail")
+        if resp.status_code == 404:
+            raise LookupError(f"sku not found: {sid}")
+        resp.raise_for_status()
+        data = resp.json()
+        data.setdefault("mock", False)
+        return data
+
+    async def get_product_reviews(
+        self,
+        sku_id: str,
+        *,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """
+        商品评论（正式接口未就绪时 mock）。
+
+        Args:
+            sku_id: SKU。
+            limit: 条数上限。
+
+        Returns:
+            dict: reviews[] / mock。
+        """
+        sid = str(sku_id)
+        n = max(1, min(int(limit), 20))
+        if self.mock_features:
+            reviews = [
+                {
+                    "review_id": f"r-{sid}-{i}",
+                    "rating": 5 if i % 3 else 4,
+                    "content": (
+                        "质量不错，物流快，会回购。"
+                        if i % 2 == 0
+                        else "包装扎实，色差可接受，性价比高。"
+                    ),
+                    "created_at": "2026-10-01",
+                }
+                for i in range(1, n + 1)
+            ]
+            return {"sku_id": sid, "reviews": reviews, "mock": True, "source": "fixture"}
+        resp = await self._request(
+            "GET",
+            f"/internal/products/{sid}/reviews",
+            params={"limit": n},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        data.setdefault("mock", False)
+        return data
+
+    async def get_inventory_policy(
+        self,
+        sku_ids: list[str],
+    ) -> dict[str, Any]:
+        """
+        库存预警与限购策略（正式接口未就绪时 mock）。
+
+        Args:
+            sku_ids: SKU 列表。
+
+        Returns:
+            dict: items[] 含 stock_qty / warning / purchase_limit。
+        """
+        ids = [str(x) for x in (sku_ids or [])[:50]]
+        if self.mock_features:
+            items: list[dict[str, Any]] = []
+            for i, sid in enumerate(ids):
+                stock = 8 if i % 3 == 0 else (120 if i % 3 == 1 else 45)
+                warning = "LOW_STOCK" if stock < 20 else ("OVERSTOCK" if stock > 100 else "OK")
+                purchase_limit = 2 if stock < 20 else (0 if stock > 100 else 5)
+                items.append(
+                    {
+                        "sku_id": sid,
+                        "stock_qty": stock,
+                        "warning": warning,
+                        "purchase_limit": purchase_limit,
+                        "rationale": (
+                            "库存紧张，建议限购并补货"
+                            if warning == "LOW_STOCK"
+                            else (
+                                "库存偏高，建议控投清仓"
+                                if warning == "OVERSTOCK"
+                                else "库存健康"
+                            )
+                        ),
+                    }
+                )
+            return {"items": items, "mock": True, "source": "fixture"}
+        resp = await self._request(
+            "POST",
+            "/internal/inventory/policy",
+            json_body={"sku_ids": ids},
+        )
         resp.raise_for_status()
         data = resp.json()
         data.setdefault("mock", False)
@@ -334,6 +552,38 @@ class JavaClient:
         ctrl["pause_requested"] = True
         ctrl["pause_reason"] = reason
 
+    async def request_task_control(
+        self,
+        task_id: str,
+        *,
+        action: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """
+        暂停 / 取消 / 继续。
+
+        ``POST /internal/tasks/{taskId}/control``
+        """
+        act = (action or "").strip().lower()
+        if self.mock_features:
+            if act == "pause":
+                self.mock_request_pause(task_id, reason or "用户暂停")
+            elif act == "cancel":
+                self.mock_request_cancel(task_id, reason or "用户取消")
+            elif act in {"resume", "continue"}:
+                return {"ok": True, "action": "resume", "task_id": task_id, "mock": True}
+            return {"ok": True, "action": act, "task_id": task_id, "mock": True}
+        resp = await self._request(
+            "POST",
+            f"/internal/tasks/{task_id}/control",
+            json_body={"action": act, "reason": reason or ""},
+        )
+        resp.raise_for_status()
+        if not resp.content:
+            return {"ok": True, "action": act, "task_id": task_id}
+        data = resp.json()
+        return data if isinstance(data, dict) else {"ok": True, "action": act}
+
     def mock_enqueue_user_message(
         self,
         conversation_id: str,
@@ -439,13 +689,28 @@ class JavaClient:
         lease_token: str,
         error_code: str,
         message: str,
+        extra: dict[str, Any] | None = None,
     ) -> None:
-        """任务失败。"""
-        body = {
+        """
+        任务失败 / 暂停 / 取消。
+
+        Args:
+            task_id: 任务 ID。
+            lease_token: 租约。
+            error_code: 错误码。
+            message: 说明。
+            extra: 合并进 fail body（如 graph_thread_id / paused_at）。
+        """
+        body: dict[str, Any] = {
             "lease_token": lease_token,
             "error_code": error_code,
             "message": message,
         }
+        if extra:
+            for key, value in extra.items():
+                if key in body or value is None:
+                    continue
+                body[key] = value
         if self.mock_features:
             self._mock_failed.append({"task_id": task_id, **body})
             return

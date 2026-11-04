@@ -18,9 +18,13 @@ from agents.chat.intent import (
     classify_message_rules,
     infer_last_task_intent,
     is_parameter_followup,
+    is_retry_message,
     parse_time_window_days,
     resolve_time_window_days,
 )
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
+from harness.checkpoint import get_checkpointer
 from schemas.chat import ChatRequest
 
 
@@ -42,7 +46,15 @@ class IntentContextTest(unittest.TestCase):
     def test_parameter_followup(self) -> None:
         self.assertTrue(is_parameter_followup("近7天"))
         self.assertTrue(is_parameter_followup("改成近7天再跑一版"))
+        self.assertTrue(is_parameter_followup("再试一次"))
         self.assertFalse(is_parameter_followup("质检一下"))
+
+    def test_retry_inherits_explosion(self) -> None:
+        self.assertTrue(is_retry_message("再试一次"))
+        self.assertEqual(
+            classify_message_rules("再试一次", last_intent="EXPLOSION"),
+            "EXPLOSION",
+        )
 
     def test_rules_inherit_explosion(self) -> None:
         self.assertEqual(
@@ -151,9 +163,21 @@ class IntentContextTest(unittest.TestCase):
 
 
 class DecisionFallbackTest(unittest.IsolatedAsyncioTestCase):
-    """无 Key 时走规则降级。"""
+    """无 Key：默认 CLARIFY；显式打开规则才降级。"""
 
-    async def test_missing_key_uses_rules(self) -> None:
+    async def test_missing_key_clarify_without_rules(self) -> None:
+        decision = await resolve_intent(
+            "筛爆品",
+            api_key="",
+            enabled=True,
+            model="decision-model-preview",
+            min_confidence=0.75,
+            allow_rules_fallback=False,
+        )
+        self.assertEqual(decision.intent, "CLARIFY")
+        self.assertEqual(decision.source, "decision_disabled")
+
+    async def test_missing_key_uses_rules_when_allowed(self) -> None:
         decision = await resolve_intent(
             "筛爆品",
             api_key="",
@@ -164,6 +188,15 @@ class DecisionFallbackTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.intent, "EXPLOSION")
         self.assertEqual(decision.source, "rules_fallback")
+
+
+class CheckpointerTest(unittest.TestCase):
+    """compile() 必须拿到 Saver 实例，不能是上下文管理器。"""
+
+    def test_memory_saver_instance(self) -> None:
+        saver = get_checkpointer()
+        self.assertIsInstance(saver, BaseCheckpointSaver)
+        self.assertTrue(hasattr(saver, "aget_tuple"))
 
 
 if __name__ == "__main__":

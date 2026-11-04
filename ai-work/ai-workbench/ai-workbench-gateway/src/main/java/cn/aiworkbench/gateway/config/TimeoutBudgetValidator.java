@@ -26,8 +26,9 @@ public class TimeoutBudgetValidator implements ApplicationRunner, Ordered {
     @Override
     public void run(ApplicationArguments args) {
         timeoutBudgetProperties.validate();
-        log.info("gateway timeout budget validated default={} streamIdle={}",
+        log.info("gateway timeout budget validated default={} chat={} streamIdle={}",
                 timeoutBudgetProperties.getGatewayDefault(),
+                timeoutBudgetProperties.getGatewayChat(),
                 timeoutBudgetProperties.getGatewayStreamIdle());
     }
 

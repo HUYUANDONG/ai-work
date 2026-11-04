@@ -21,7 +21,9 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * 商品草稿用例：保存、查询、确认后发送。Controller 不写这段逻辑。
+ * 商品草稿用例：保存、查询、确认后发送。
+ * <p>
+ * 上架商品能力已暂时砍掉，公开 API 一律拒绝；领域与仓储保留便于以后恢复。
  */
 @Slf4j
 @Service
@@ -38,6 +40,7 @@ public class ProductDraftService {
      * @return 草稿
      */
     public ProductDraftResponse create(SaveProductDraftRequest request) {
+        refuseTemporarilyCut();
         ProductDraft draft = ProductDraft.create(
                 requireUserId(),
                 request.getProductNumber(),
@@ -56,6 +59,7 @@ public class ProductDraftService {
      * @return 草稿
      */
     public ProductDraftResponse update(String id, SaveProductDraftRequest request) {
+        refuseTemporarilyCut();
         ProductDraft draft = loadOwned(id);
         draft.updateContent(request.getProductNumber(), request.getTitle(), request.getDescription());
         productDraftRepository.save(draft);
@@ -69,6 +73,7 @@ public class ProductDraftService {
      * @return 草稿
      */
     public ProductDraftResponse get(String id) {
+        refuseTemporarilyCut();
         return ProductDraftResponse.from(loadOwned(id));
     }
 
@@ -78,6 +83,7 @@ public class ProductDraftService {
      * @return 列表
      */
     public List<ProductDraftResponse> listMine() {
+        refuseTemporarilyCut();
         return productDraftRepository.findByUserId(requireUserId()).stream()
                 .map(ProductDraftResponse::from)
                 .toList();
@@ -91,6 +97,7 @@ public class ProductDraftService {
      * @return 发送后的草稿
      */
     public ProductDraftResponse confirmPublish(String id, boolean confirmed) {
+        refuseTemporarilyCut();
         if (!confirmed) {
             throw new BizException(WorkspaceErrorCode.CONFIRM_REQUIRED);
         }
@@ -193,5 +200,12 @@ public class ProductDraftService {
             throw new BizException(CommonErrorCode.UNAUTHORIZED);
         }
         return userId;
+    }
+
+    /**
+     * 上架商品 API 暂时统一拒绝。
+     */
+    private void refuseTemporarilyCut() {
+        throw new BizException(WorkspaceErrorCode.FEATURE_TEMPORARILY_CUT);
     }
 }

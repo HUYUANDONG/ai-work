@@ -31,6 +31,10 @@ _NEW_INTENT_KEYS = (
     "改价",
     "上架",
     "下架",
+    "发圈",
+    "一键发圈",
+    "发朋友圈",
+    "上架商品",
 )
 
 _EXPLOSION_KEYS = (
@@ -46,6 +50,49 @@ _EXPLOSION_KEYS = (
     "冲量",
     "清仓",
     "毛利",
+)
+
+# 首句已明确要投放/作战建议 → 同轮 include_advise
+_ADVISE_WANT_KEYS = (
+    "建议",
+    "投放",
+    "怎么推",
+    "怎么投",
+    "放哪",
+    "作战建议",
+    "给建议",
+    "出建议",
+    "写建议",
+    "推哪",
+    "放哪个板块",
+)
+
+_ADVISE_AFFIRM_KEYS = (
+    "要",
+    "需要",
+    "好的",
+    "行",
+    "可以",
+    "给建议",
+    "出建议",
+    "写建议",
+    "要建议",
+    "来吧",
+    "继续",
+)
+
+_ADVISE_DECLINE_KEYS = (
+    "不用",
+    "不要",
+    "先这样",
+    "暂不",
+    "不需要",
+    "下次再说",
+    "算了",
+)
+
+ADVICE_OFFER_QUESTION = (
+    "需要我结合日板块流量写投放建议吗？回复「要」或「不用」即可。"
 )
 
 _WINDOW_RE = re.compile(
@@ -139,8 +186,42 @@ def is_parameter_followup(message: str) -> bool:
     has_window = parse_time_window_days(text) is not None
     has_goal = any(k in text for k in ("清仓", "清库存", "毛利", "利润", "保利", "gmv", "GMV", "冲量"))
     has_slots = bool(re.search(r"(盯\s*\d+|\d+\s*个)", text))
-    has_rerun = any(k in text for k in ("再跑", "重跑", "换窗口", "改成", "换成", "按这个", "按刚才"))
+    has_rerun = any(
+        k in text
+        for k in (
+            "再跑",
+            "重跑",
+            "换窗口",
+            "改成",
+            "换成",
+            "按这个",
+            "按刚才",
+            "再试",
+            "再来一",
+            "重新分析",
+            "重新跑",
+        )
+    )
     return has_window or has_goal or has_slots or has_rerun
+
+
+def is_retry_message(message: str) -> bool:
+    """
+    用户要重跑上一轮任务，而不是把话排进当前长任务队列。
+
+    Args:
+        message: 用户原文。
+
+    Returns:
+        bool: 「再试一次」等应开新任务。
+    """
+    text = (message or "").strip()
+    if not text:
+        return False
+    return any(
+        k in text
+        for k in ("再试", "再跑", "重跑", "再来一", "重新分析", "重新跑", "再筛")
+    )
 
 
 def infer_last_task_intent(history: list[dict[str, Any]] | None) -> str | None:
@@ -199,6 +280,10 @@ def classify_message_rules(message: str, *, last_intent: str | None = None) -> s
         "竞品价",
         "chatgpt",
         "翻译",
+        "发圈",
+        "一键发圈",
+        "发朋友圈",
+        "上架商品",
     )
     if any(k in text for k in out_scope_keys):
         return "OUT_OF_SCOPE"
@@ -240,6 +325,58 @@ def classify_message_rules(message: str, *, last_intent: str | None = None) -> s
     return "CLARIFY"
 
 
+def wants_explosion_advise(message: str) -> bool:
+    """
+    用户是否在首句（或补参句）明确要求投放/作战建议。
+
+    Args:
+        message: 用户原文。
+
+    Returns:
+        bool: True 则任务同轮拉板块并用 LLM 写建议。
+    """
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    return any(k in text for k in _ADVISE_WANT_KEYS)
+
+
+def is_advise_affirm(message: str) -> bool:
+    """
+    榜单后确认「要建议」的短答（可带时间窗，如「近30天也要建议」）。
+
+    Args:
+        message: 用户原文。
+
+    Returns:
+        bool: 肯定续问。
+    """
+    text = (message or "").strip().lower()
+    if not text or len(text) > 48:
+        return False
+    if any(k in text for k in _NEW_INTENT_KEYS):
+        return False
+    if any(k in text for k in _ADVISE_DECLINE_KEYS):
+        return False
+    return any(k in text for k in _ADVISE_AFFIRM_KEYS)
+
+
+def is_advise_decline(message: str) -> bool:
+    """
+    榜单后明确不要建议。
+
+    Args:
+        message: 用户原文。
+
+    Returns:
+        bool: 否定续问。
+    """
+    text = (message or "").strip().lower()
+    if not text or len(text) > 40:
+        return False
+    return any(k in text for k in _ADVISE_DECLINE_KEYS)
+
+
 def build_explosion_input(message: str, base: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     为爆品任务填充 input；可叠加上一轮参数。
@@ -259,10 +396,11 @@ def build_explosion_input(message: str, base: dict[str, Any] | None = None) -> d
         "on_sale_only": True,
         "category_id": None,
         "sku_ids": None,
+        "include_advise": False,
     }
     if base:
         for key, value in base.items():
-            if key in data and value is not None:
+            if key in data and value is not None and key != "include_advise":
                 data[key] = value
 
     text = (message or "").lower()
@@ -282,6 +420,7 @@ def build_explosion_input(message: str, base: dict[str, Any] | None = None) -> d
             data["focus_slots"] = min(n, D.MAX_FOCUS_SLOTS)
             break
 
+    data["include_advise"] = wants_explosion_advise(message)
     return data
 
 
@@ -308,7 +447,7 @@ def out_of_scope_reply() -> str:
     """无关请求拒绝话术。"""
     return (
         "我只能帮你做店内**爆品作战清单**和**商品质检**（看增长、风险、本周盯谁）。"
-        "你刚才说的不在能力范围内。"
+        "**上架商品**和**一键发圈**已暂时下线，不在能力范围内。"
         "可以试试：「按近 30 天冲 GMV，给我 5 个本周重点」或「质检一下 SKU-xxx」。"
     )
 

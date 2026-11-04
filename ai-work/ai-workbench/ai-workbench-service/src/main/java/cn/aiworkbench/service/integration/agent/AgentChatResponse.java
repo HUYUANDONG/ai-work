@@ -19,6 +19,10 @@ public class AgentChatResponse {
     private boolean clarifyPending;
     private Map<String, Object> queueAck;
     private Map<String, Object> uiHints;
+    /** Python 高水位 LLM 深度摘要；有则覆盖本地 workingSummary。 */
+    private String workingSummary;
+    /** 摘要覆盖到的最大 ai_message.id（含）。 */
+    private Long summaryThroughMessageId;
 
     /**
      * 需要 Java 创建的长任务。

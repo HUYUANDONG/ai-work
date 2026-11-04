@@ -36,6 +36,7 @@ def render_fallback_html(locked_payload: dict[str, Any]) -> str:
             f"<td>{html.escape(str(c.get('title', '')))}</td>"
             f"<td>{html.escape(str(c.get('explosion_score', '')))}</td>"
             f"<td>{html.escape(str(c.get('quality_risk_level', '')))}</td>"
+            f"<td>{html.escape(str(c.get('action_bucket', '')))}</td>"
             f"<td>{html.escape(', '.join(c.get('quality_rule_ids') or []))}</td>"
             "</tr>"
         )
@@ -45,14 +46,24 @@ def render_fallback_html(locked_payload: dict[str, Any]) -> str:
     risk_labels_js = json.dumps(list(risk_counts.keys()), ensure_ascii=False)
     risk_values_js = json.dumps(list(risk_counts.values()))
 
+    bucket_label = {
+        "PUSH": "本周可主推",
+        "FIX_THEN_PUSH": "先修再冲",
+        "WATCH": "观察一周",
+        "DROP": "暂不主推",
+    }
     tips = []
-    for c in candidates[:5]:
+    for c in candidates[:8]:
         risk = c.get("quality_risk_level") or "NONE"
-        tip = "可关注" if risk == "NONE" else "先处理风险再放量"
+        bucket = str(c.get("action_bucket") or "WATCH")
+        title = html.escape(str(c.get("title") or c.get("sku_id") or ""))
+        slot = "进槽" if c.get("in_focus_slot") else "未进槽"
+        action = html.escape(str(c.get("primary_action") or bucket_label.get(bucket, bucket)))
         tips.append(
-            f"<li><strong>#{c.get('rank')} {html.escape(str(c.get('sku_id')))}</strong>："
-            f"分 {html.escape(str(c.get('explosion_score')))}，风险 {html.escape(str(risk))}。"
-            f"{tip}。</li>"
+            f"<li><strong>#{c.get('rank')} {title}</strong>"
+            f"（{html.escape(str(c.get('sku_id')))}）："
+            f"分 {html.escape(str(c.get('explosion_score')))}，风险 {html.escape(str(risk))}，"
+            f"{html.escape(bucket_label.get(bucket, bucket))}（{slot}）。{action}</li>"
         )
 
     return f"""<!DOCTYPE html>
@@ -98,7 +109,7 @@ def render_fallback_html(locked_payload: dict[str, Any]) -> str:
   <div class="card">
     <h2>候选明细</h2>
     <table>
-      <thead><tr><th>排名</th><th>SKU</th><th>标题</th><th>爆品分</th><th>风险</th><th>规则</th></tr></thead>
+      <thead><tr><th>排名</th><th>SKU</th><th>标题</th><th>爆品分</th><th>风险</th><th>动作</th><th>规则</th></tr></thead>
       <tbody>{''.join(rows)}</tbody>
     </table>
   </div>

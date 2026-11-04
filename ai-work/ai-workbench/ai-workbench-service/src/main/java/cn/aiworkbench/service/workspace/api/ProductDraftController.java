@@ -21,8 +21,10 @@ import java.util.List;
 
 /**
  * 商品草稿 HTTP 入口。只做路由和参数校验，业务在 {@link ProductDraftService}。
+ * <p>
+ * 上架商品能力已暂时砍掉，接口仍保留路径但一律返回 {@code WORKSPACE_FEATURE_TEMPORARILY_CUT}。
  */
-@Tag(name = "ProductDraft")
+@Tag(name = "ProductDraft（已暂时下线）")
 @RestController
 @RequestMapping("/api/v1/product-drafts")
 @RequiredArgsConstructor

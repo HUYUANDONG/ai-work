@@ -1,16 +1,17 @@
 """
 按 task_type 代码路由到专家 Agent。
 
-EXPLOSION → Explosion；QUALITY → Quality。
-对话入口不经此路由。
+查 ``TaskAgent`` 注册表（内置 EXPLOSION / QUALITY）；对话入口不经此路由。
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from harness.runtime import AppRuntime
+if TYPE_CHECKING:
+    from harness.runtime import AppRuntime
 
+# 兼容旧引用（内置类型；运行时以注册表为准）
 SUPPORTED_TASK_TYPES = frozenset({"EXPLOSION", "QUALITY"})
 
 
@@ -23,7 +24,7 @@ async def route_task(
     将领取到的任务派发到对应专家入口。
 
     Args:
-        task_type: ``EXPLOSION`` 或 ``QUALITY``。
+        task_type: 已注册的任务类型。
         context: 任务上下文。
         runtime: AppRuntime。
 
@@ -33,16 +34,14 @@ async def route_task(
     Raises:
         ValueError: 未知 task_type。
     """
-    normalized = (task_type or "").strip().upper()
-    if normalized not in SUPPORTED_TASK_TYPES:
-        raise ValueError(f"unsupported task_type: {task_type!r}")
+    # 任务专家也经 Supervisor 派发（内部仍查 TaskAgent 注册表）
+    from agents.supervisor import WorkbenchSupervisor
 
-    if normalized == "EXPLOSION":
-        from agents.explosion.graph import run_explosion
-
-        return await run_explosion(context, runtime)
-
-    from agents.quality.graph import run_quality
-
-    return await run_quality(context, runtime)
-
+    if not isinstance(getattr(runtime, "supervisor", None), WorkbenchSupervisor):
+        runtime.supervisor = WorkbenchSupervisor.create(
+            llm=getattr(runtime, "llm_client", None),
+            council_llm_enabled=bool(
+                getattr(getattr(runtime, "settings", None), "council_llm_enabled", False)
+            ),
+        )
+    return await runtime.supervisor.run_task(task_type, context, runtime)

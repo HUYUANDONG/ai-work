@@ -105,6 +105,18 @@ class Settings(BaseSettings):
         default=8,
         validation_alias="WB_CHAT_WORKING_KEEP_LAST",
     )
+    # 记忆占输入预算达到该比例才触发一次 LLM 深度摘要（不频繁、不截断）
+    chat_summary_pressure: float = Field(
+        default=0.80,
+        ge=0.50,
+        le=0.95,
+        validation_alias="WB_CHAT_SUMMARY_PRESSURE",
+    )
+    # 会签 Signal/Risk/Strategy 默认规则；true 时才对精简候选调 LLM
+    council_llm_enabled: bool = Field(
+        default=False,
+        validation_alias="WB_COUNCIL_LLM_ENABLED",
+    )
 
     @property
     def resolved_llm_api_key(self) -> str:

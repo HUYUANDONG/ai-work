@@ -17,7 +17,8 @@ class InMemoryTaskRuntimeTest {
 
     @Test
     void awaitFinishedReturnsSummary() throws InterruptedException {
-        InMemoryTaskRuntime runtime = new InMemoryTaskRuntime();
+        InMemoryTaskRuntime runtime = new InMemoryTaskRuntime(
+                new cn.aiworkbench.service.conversation.sse.ConversationSseHub());
         Map<String, Object> created = runtime.enqueue(Map.of("task_type", "EXPLOSION"));
         String taskId = String.valueOf(created.get("task_id"));
         String lease = String.valueOf(created.get("lease_token"));

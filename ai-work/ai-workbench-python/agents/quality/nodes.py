@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
 from agents.quality.state import QualityState
-from clients.llm_client import LlmClient
+from agents.supervisor.workbench import WorkbenchSupervisor
 from harness.runtime import AppRuntime
+from harness.task_control import TaskControl
 from schemas.ops_fields import slim_ops_excerpt
 from scoring import config as scoring_config
 from scoring.explosion import score_sku
@@ -21,31 +21,36 @@ from tools.reports import upsert_quality_report
 
 logger = logging.getLogger(__name__)
 MAX_EXPLAIN = 50
-EXPLAIN_SYSTEM = """你是质检顾问。对每个有问题的 SKU，根据 issues 写一句 ai_comment（中文，可执行）。
-输出 JSON 对象：{"comments":{"SKU-001":"..."}, "summary":"整份报告一句话总结"}。
-禁止改分数；禁止编造 rule_id。不要用 Markdown 围栏。"""
+
+
+def _cfg(config: RunnableConfig) -> tuple[AppRuntime, TaskControl | None]:
+    """
+    从 RunnableConfig 取 runtime / TaskControl。
+
+    Args:
+        config: LangGraph 配置。
+
+    Returns:
+        tuple: (AppRuntime, TaskControl|None)。
+    """
+    conf = (config or {}).get("configurable") or {}
+    return conf["runtime"], conf.get("control")
 
 
 def _runtime(config: RunnableConfig) -> AppRuntime:
-    return ((config or {}).get("configurable") or {})["runtime"]
+    return _cfg(config)[0]
 
 
-def _template_comments(rows: list[dict[str, Any]]) -> tuple[dict[str, str], str]:
-    comments: dict[str, str] = {}
-    high = 0
-    for r in rows:
-        if r.get("risk_level") in {"HIGH", "MID"}:
-            if r.get("risk_level") == "HIGH":
-                high += 1
-            rules = ",".join(i["rule_id"] for i in (r.get("issues") or [])[:3])
-            tip = "先修再冲" if (r.get("explosion_score") or 0) >= 70 else "优先处理风险"
-            comments[str(r["sku_id"])] = f"命中 {rules}。{tip}。"
-    summary = f"共 {len(rows)} 个问题品，其中高风险 {high} 个。请优先处理高风险项。"
-    return comments, summary
+def _supervisor(runtime: AppRuntime) -> WorkbenchSupervisor:
+    if runtime.supervisor is None:
+        runtime.supervisor = WorkbenchSupervisor.create(llm=runtime.llm_client)
+    return runtime.supervisor
 
 
 async def node_load(state: QualityState, config: RunnableConfig) -> dict[str, Any]:
-    runtime = _runtime(config)
+    runtime, control = _cfg(config)
+    if control:
+        await control.checkpoint(progress="quality_load")
     task_input = dict(state.get("task_input") or {})
     sku_ids = task_input.get("sku_ids")
     features = await query_features(
@@ -54,6 +59,8 @@ async def node_load(state: QualityState, config: RunnableConfig) -> dict[str, An
         sku_ids=list(sku_ids)[:50] if sku_ids else None,
         category_id=task_input.get("category_id"),
         stat_date=task_input.get("stat_date"),
+        user_id=str(state.get("user_id") or ""),
+        time_window_days=int(task_input.get("time_window_days") or 30),
     )
     items = list(features.get("items") or [])
     if not items:
@@ -66,7 +73,9 @@ async def node_load(state: QualityState, config: RunnableConfig) -> dict[str, An
 
 
 async def node_rule_check(state: QualityState, config: RunnableConfig) -> dict[str, Any]:
-    _ = config
+    _, control = _cfg(config)
+    if control:
+        await control.checkpoint(progress="quality_rule_check")
     task_input = dict(state.get("task_input") or {})
     sku_ids = task_input.get("sku_ids")
     storewide = bool(task_input.get("storewide_problems"))
@@ -109,40 +118,14 @@ async def node_rule_check(state: QualityState, config: RunnableConfig) -> dict[s
 
 
 async def node_explain(state: QualityState, config: RunnableConfig) -> dict[str, Any]:
-    runtime = _runtime(config)
+    runtime, control = _cfg(config)
+    if control:
+        await control.checkpoint(progress="quality_explain")
     rows = list(state.get("rows") or [])
-    comments, summary = _template_comments(rows)
-    explain_source = "template"
-    llm: LlmClient | None = runtime.llm_client
-    if llm is not None and llm.enabled and rows:
-        try:
-            slim = [
-                {
-                    "sku_id": r["sku_id"],
-                    "risk_level": r["risk_level"],
-                    "explosion_score": r["explosion_score"],
-                    "issues": r["issues"],
-                }
-                for r in rows
-            ]
-            raw = await llm.chat(
-                system=EXPLAIN_SYSTEM,
-                user=json.dumps({"items": slim}, ensure_ascii=False),
-            )
-            raw = raw.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.startswith("json"):
-                    raw = raw[4:].strip()
-            parsed = json.loads(raw)
-            if isinstance(parsed.get("comments"), dict):
-                comments.update({str(k): str(v) for k, v in parsed["comments"].items()})
-            if parsed.get("summary"):
-                summary = str(parsed["summary"])
-            explain_source = "llm"
-        except Exception:
-            logger.exception("quality LLM explain failed")
-            explain_source = "template_fallback"
+    phase = await _supervisor(runtime).phase_quality_explain(rows)
+    comments = dict(phase.get("comments") or {})
+    summary = str(phase.get("summary") or "")
+    explain_source = str(phase.get("explain_source") or "template")
 
     for r in rows:
         for issue in r["issues"]:
@@ -156,7 +139,9 @@ async def node_explain(state: QualityState, config: RunnableConfig) -> dict[str,
 
 
 async def node_upsert(state: QualityState, config: RunnableConfig) -> dict[str, Any]:
-    runtime = _runtime(config)
+    runtime, control = _cfg(config)
+    if control:
+        await control.checkpoint(progress="quality_upsert")
     task_id = str(state.get("task_id") or "unknown-task")
     conversation_id = state.get("conversation_id") or "mock-conversation"
     user_id = state.get("user_id") or "mock-user"

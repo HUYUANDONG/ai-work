@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.aiworkbench.service.persist.mapper.AiQualityMapper">
+
+    <insert id="upsertHeader">
+        INSERT INTO ai_quality_report (
+            task_id, user_id, conversation_id, snapshot_date, scoring_version,
+            sku_count, high_risk_count, summary, header_json
+        ) VALUES (
+            #{taskId}, #{userId}, #{conversationId}, #{snapshotDate}, #{scoringVersion},
+            #{skuCount}, #{highRiskCount}, #{summary}, #{headerJson}
+        )
+        ON DUPLICATE KEY UPDATE
+            user_id = VALUES(user_id),
+            conversation_id = VALUES(conversation_id),
+            snapshot_date = VALUES(snapshot_date),
+            scoring_version = VALUES(scoring_version),
+            sku_count = VALUES(sku_count),
+            high_risk_count = VALUES(high_risk_count),
+            summary = VALUES(summary),
+            header_json = VALUES(header_json)
+    </insert>
+
+    <delete id="deleteItems">
+        DELETE FROM ai_quality_issue WHERE task_id = #{taskId}
+    </delete>
+
+    <insert id="upsertItem">
+        INSERT INTO ai_quality_issue (
+            task_id, sku_id, quality_score, ops_score, risk_level, explosion_score,
+            explosion_candidate, issues_json, skipped_rules, feature_excerpt
+        ) VALUES (
+            #{taskId}, #{skuId}, #{qScore}, #{opsScore}, #{risk}, #{expScore},
+            #{candidate}, #{issuesJson}, #{skipped}, #{excerpt}
+        )
+        ON DUPLICATE KEY UPDATE
+            quality_score = VALUES(quality_score),
+            ops_score = VALUES(ops_score),
+            risk_level = VALUES(risk_level),
+            explosion_score = VALUES(explosion_score),
+            explosion_candidate = VALUES(explosion_candidate),
+            issues_json = VALUES(issues_json),
+            skipped_rules = VALUES(skipped_rules),
+            feature_excerpt = VALUES(feature_excerpt)
+    </insert>
+
+    <select id="listHeaders" resultType="map">
+        SELECT task_id, user_id, conversation_id, snapshot_date, scoring_version,
+               sku_count, high_risk_count, summary, header_json, created_at
+        FROM ai_quality_report
+        WHERE conversation_id = #{conversationId}
+          AND (user_id = #{userId} OR user_id IS NULL)
+        ORDER BY created_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listItems" resultType="map">
+        SELECT sku_id, quality_score, ops_score, risk_level, explosion_score,
+               explosion_candidate, issues_json, skipped_rules, feature_excerpt
+        FROM ai_quality_issue
+        WHERE task_id = #{taskId}
+    </select>
+
+</mapper>

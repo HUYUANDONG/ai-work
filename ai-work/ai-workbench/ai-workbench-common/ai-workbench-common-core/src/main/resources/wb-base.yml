@@ -51,3 +51,10 @@ wb:
     python-base-url: ${WB_AGENT_PYTHON_BASE_URL:http://127.0.0.1:8001}
     timeout-seconds: ${WB_AGENT_TIMEOUT_SECONDS:40}
     wait-task-seconds: ${WB_AGENT_WAIT_TASK_SECONDS:90}
+  admin:
+    api-base: ${WB_ADMIN_API_BASE:https://adminapi.hpsmall.com}
+    token: ${WB_ADMIN_TOKEN:}
+    secret-key: ${WB_ADMIN_SECRET:}
+    allow-fixture: ${WB_ADMIN_ALLOW_FIXTURE:false}
+    page-size: 100
+    max-pages: 30

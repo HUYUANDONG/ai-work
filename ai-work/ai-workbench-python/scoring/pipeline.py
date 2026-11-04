@@ -28,6 +28,7 @@ def filter_marketing_candidates(items: list[dict[str, Any]]) -> list[dict[str, A
     """
     out: list[dict[str, Any]] = []
     for row in items:
+        hydrate_ops_windows(row)
         if not bool(row.get("on_sale", True)):
             continue
         gmv = num(row.get("gmv_30d"), 0.0) or 0.0
@@ -36,6 +37,30 @@ def filter_marketing_candidates(items: list[dict[str, Any]]) -> list[dict[str, A
             continue
         out.append(row)
     return out
+
+
+def hydrate_ops_windows(row: dict[str, Any]) -> None:
+    """
+    运营接口字段补进评分窗口：有 gmv_* 不覆盖；缺了才用 orderSales / goodsUv。
+    """
+    if num(row.get("gmv_30d")) is None and num(row.get("orderSales")) is not None:
+        row["gmv_30d"] = row.get("orderSales")
+    if num(row.get("gmv_prev_30d")) is None and num(row.get("orderSalesPrev")) is not None:
+        row["gmv_prev_30d"] = row.get("orderSalesPrev")
+    if num(row.get("orders_30d")) is None and num(row.get("orderNumbers")) is not None:
+        row["orders_30d"] = row.get("orderNumbers")
+    if num(row.get("orders_prev_30d")) is None and num(row.get("orderNumbersPrev")) is not None:
+        row["orders_prev_30d"] = row.get("orderNumbersPrev")
+    if num(row.get("clicks_30d")) is None and num(row.get("goodsUv")) is not None:
+        row["clicks_30d"] = row.get("goodsUv")
+    if num(row.get("impressions_30d")) is None and num(row.get("goodsPv")) is not None:
+        row["impressions_30d"] = row.get("goodsPv")
+    if num(row.get("rate_per")) is None and num(row.get("ratePer")) is not None:
+        row["rate_per"] = row.get("ratePer")
+    if not row.get("sku_id"):
+        row["sku_id"] = row.get("goodsId")
+    if not row.get("title"):
+        row["title"] = row.get("goodsName")
 
 
 def rank_candidates(
@@ -76,6 +101,24 @@ def rank_candidates(
                 "quality_score": q["quality_score"],
                 "ops_score": q["ops_score"],
                 "feature_excerpt": slim_ops_excerpt(row),
+                "metrics": {
+                    "gmv_30d": row.get("gmv_30d"),
+                    "gmv_prev_30d": row.get("gmv_prev_30d"),
+                    "clicks_30d": row.get("clicks_30d"),
+                    "clicks_prev_30d": row.get("clicks_prev_30d"),
+                    "orders_30d": row.get("orders_30d"),
+                    "orders_prev_30d": row.get("orders_prev_30d"),
+                    "impressions_30d": row.get("impressions_30d"),
+                    "impressions_prev_30d": row.get("impressions_prev_30d"),
+                    "paid_orders_from_clicks_30d": row.get("paid_orders_from_clicks_30d"),
+                    "rate_per": row.get("rate_per")
+                    if row.get("rate_per") is not None
+                    else row.get("ratePer"),
+                    "stock_qty": row.get("stock_qty"),
+                    "price": row.get("price"),
+                    "cost": row.get("cost"),
+                    "amount_unit": row.get("amount_unit") or "fen",
+                },
             }
         )
 

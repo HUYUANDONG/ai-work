@@ -110,26 +110,28 @@ in_focus_slot (bool), rationale, goal_mode
 
 ## 5. Graph 与计划状态机
 
+### 5.0 建议门闩（方案 B）
+
+| 用户说法 | 行为 |
+|---|---|
+| 「近7天爆品」等未点名建议 | 打分+定槽后出榜单，**询问**是否要投放建议；不拉板块 |
+| 「…并给建议 / 怎么投」 | `include_advise=true`：定槽 → 拉板块 → **LLM 写建议** |
+| 榜单后回「要」 | 对话同步：读最近报告槽位 → 拉板块 → LLM；不重跑打分 |
+| 榜单后回「不用」 | 结束，保留榜单 |
+
+会签三角色默认仍走**规则**（`WB_COUNCIL_LLM_ENABLED=false`）；**投放建议叙事**才调 LLM。
+
 ### 5.1 主路径
 
 ```text
-parse_intent / load_goal     目标模式、槽位、类目等；缺则指挥或对话已澄清
-load_features               一次 Java features/query
-filter                      在售、类目、最低销量等
-score_all                   代码打分
-attach_quality              同一套规则写风险标签
-select_top_n                排序截断
-plan_init                   指挥：初始计划（默认：并行会签 → reduce → summarize）
-    │
-    ├─(并行) signal_council
-    ├─(并行) risk_council
-    └─(并行) strategy_council   策略可先读信号/风控结果：若图内容忍，用「先信号+风控并行，再策略」两段式
-council_reduce              合并意见、执行 veto 约束、分配槽位
-plan_decide                 指挥：CONTINUE | REVISE | FINISH
-    │ REVISE → 改 plan 后回到会签或仅重跑策略（受上限约束）
-    │ FINISH ↓
-summarize                   生成 summary（作战摘要）
-upsert_report               先写 Java 再 complete
+parse_intent / load_goal     目标模式、槽位、include_advise 等
+load_features               一次 Java features/query（profile=score）
+score_all / attach_quality / select_top_n
+signal_risk → strategy → reduce_decide（规则会签为主）
+    │ REVISE → 回到会签或仅重跑策略
+    │ FINISH + include_advise=false → report（榜单 + 询问）
+    │ FINISH + include_advise=true  → load_advise → write_advise(LLM) → report
+summarize / upsert_report
 ```
 
 推荐默认边：**信号 ∥ 风控 → 策略 → reduce → plan_decide**，保证策略看到风控 veto，又保留并行度。

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from app.worker import run_worker_loop
 from core.config import get_settings
 from db.session import close_db, init_db
+from harness.checkpoint import close_checkpointer, init_checkpointer
 from harness.runtime import AppRuntime
 
 logger = logging.getLogger("uvicorn.error")
@@ -29,6 +30,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     if settings.checkpoint_database_url:
         init_db(settings)
+    await init_checkpointer(settings)
+    from agents.explosion.lg_graph import get_explosion_app
+    from agents.quality.lg_graph import get_quality_app
+
+    get_explosion_app()
+    get_quality_app()
 
     worker_task = asyncio.create_task(
         run_worker_loop(runtime=app.state.runtime),
@@ -42,4 +49,5 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_task.cancel()
         with suppress(asyncio.CancelledError):
             await worker_task
+        await close_checkpointer()
         await close_db()

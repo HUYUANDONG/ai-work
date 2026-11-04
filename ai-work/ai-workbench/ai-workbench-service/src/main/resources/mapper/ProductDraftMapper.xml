@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- BaseMapper 提供的 CRUD 不用写；这里只放自定义 SQL -->
+<mapper namespace="cn.aiworkbench.service.workspace.mapper.ProductDraftMapper">
+
+    <select id="selectByUserId"
+            resultType="cn.aiworkbench.service.workspace.infra.ProductDraftDO">
+        SELECT id, user_id, product_number, title, description, status,
+               target_id, last_error, created_at, updated_at
+        FROM wb_product_draft
+        WHERE user_id = #{userId}
+        ORDER BY updated_at DESC
+    </select>
+
+</mapper>

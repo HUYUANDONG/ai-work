@@ -21,7 +21,8 @@ spring:
     gateway:
       httpclient:
         connect-timeout: 5000
-        response-timeout: ${wb.timeout.gateway-default}
+        # 对话会等 Worker，须大于 wb.agent.wait-task-seconds；普通接口提前返回不会空等
+        response-timeout: 150s
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Origin, RETAIN_UNIQUE
       globalcors:
@@ -37,21 +38,22 @@ spring:
           predicates:
             - Path=/api/v1/conversations/*/stream,/api/v1/conversations/stream
           metadata:
-            response-timeout: ${wb.timeout.gateway-stream-idle}
+            # Spring Cloud Gateway 路由 metadata 必须是毫秒数字，写 120s 会回落到全局 30s
+            response-timeout: 150000
             connect-timeout: 5000
         - id: workbench-agent-chat
           uri: ${wb.gateway.service-uri}
           predicates:
             - Path=/api/v1/agent/chat
           metadata:
-            response-timeout: ${wb.timeout.gateway-chat}
+            response-timeout: 150000
             connect-timeout: 5000
         - id: workbench-service
           uri: ${wb.gateway.service-uri}
           predicates:
             - Path=/api/**
           metadata:
-            response-timeout: ${wb.timeout.gateway-default}
+            response-timeout: 30000
             connect-timeout: 5000
 
 server:

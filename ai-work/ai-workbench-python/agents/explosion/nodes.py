@@ -2,29 +2,27 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from agents.explosion.campaign import apply_revise, init_plan, plan_decide
-from agents.explosion.council import COUNCIL_VERSION, _focus_preview, council_reduce
-from agents.explosion.roles import (
-    run_risk_council,
-    run_signal_council,
-    run_strategy_council,
-)
+from agents.chat.intent import ADVICE_OFFER_QUESTION
+from agents.explosion.campaign import init_plan
+from agents.explosion.narrative import build_operator_report
 from agents.explosion.state import ExplosionState
+from agents.supervisor.workbench import WorkbenchSupervisor
 from harness.runtime import AppRuntime
 from harness.task_control import TaskControl
 from reporting.builder import build_explosion_report
 from scoring import config as scoring_config
 from scoring.pipeline import rank_candidates
-from tools.features import query_features
+from tools.features import query_advise_context, query_features
 from tools.reports import upsert_explosion_report
 
 logger = logging.getLogger(__name__)
+
+AGENT_VERSION = "explosion-agent-v1"
 
 
 def _cfg(config: RunnableConfig) -> tuple[AppRuntime, TaskControl | None]:
@@ -40,22 +38,38 @@ def _build_summary(
     goal_mode: str,
     slots: int,
     plan: dict[str, Any],
+    features: dict[str, Any] | None = None,
+    thinking_events: list[dict[str, Any]] | None = None,
+    task_input: dict[str, Any] | None = None,
+    advise_context: dict[str, Any] | None = None,
+    advise_llm_text: str | None = None,
+    offer_advise: bool = False,
+    explosion_analysis: str | None = None,
 ) -> str:
-    focus = [c for c in candidates if c.get("in_focus_slot")]
-    parts = [
-        f"目标 {goal_mode}，本周槽位 {slots}，实际进槽 {len(focus)} 个。",
-        f"会签轮次 {plan.get('llm_round')}，修订 {plan.get('revision')} 次。",
-    ]
-    if plan.get("plan_degraded"):
-        parts.append(f"计划降级：{plan.get('revision_reason')}")
-    elif plan.get("revision_reason"):
-        parts.append(str(plan.get("revision_reason")))
-    for c in focus[:5]:
-        parts.append(
-            f"{c.get('sku_id')}→{c.get('action_bucket')}（分 {c.get('explosion_score')}，"
-            f"风险 {c.get('quality_risk_level')}）"
-        )
-    return " ".join(parts)
+    """运营可读结论。"""
+    base = build_operator_report(
+        candidates,
+        goal_mode=goal_mode,
+        slots=slots,
+        plan=plan,
+        features=features,
+        thinking_events=thinking_events,
+        task_input=task_input,
+        advise_context=advise_context,
+        advise_llm_text=advise_llm_text,
+        offer_advise=offer_advise,
+        advice_offer_question=ADVICE_OFFER_QUESTION,
+    )
+    analysis = (explosion_analysis or "").strip()
+    if analysis:
+        return f"{base}\n\n【爆品解读】\n{analysis}"
+    return base
+
+
+def _supervisor(runtime: AppRuntime) -> WorkbenchSupervisor:
+    if runtime.supervisor is None:
+        runtime.supervisor = WorkbenchSupervisor.create(llm=runtime.llm_client)
+    return runtime.supervisor
 
 
 async def node_load_features(
@@ -73,23 +87,49 @@ async def node_load_features(
         sku_ids=task_input.get("sku_ids"),
         category_id=task_input.get("category_id"),
         stat_date=task_input.get("stat_date"),
+        user_id=str(state.get("user_id") or ""),
+        time_window_days=int(task_input.get("time_window_days") or 30),
+        profile="score",
     )
     items = features.get("items") or []
+    amount_unit = features.get("amount_unit") or features.get("amountUnit")
+    if amount_unit and items:
+        for row in items:
+            if isinstance(row, dict) and not row.get("amount_unit"):
+                row["amount_unit"] = amount_unit
     if not items:
+        source = str(features.get("source") or "")
+        detail = str(features.get("message") or "")
+        if source == "no_credentials":
+            message = "拉不到真实销量：工作台还没有电商登录 token。请在已登录后台的页面重新发起分析。"
+        elif source == "error":
+            message = "调用 goodsStatList 失败：" + (detail or "未知错误")
+        else:
+            message = "特征为空，已阻断打分与报表。"
         if control:
-            await control.emit("failed", "特征为空，已停止")
+            await control.emit("failed", message)
         return {
             "features": features,
             "status": "FAILED_NO_FEATURES",
-            "message": "特征为空，已阻断打分与报表。",
+            "message": message,
             "next_action": "abort",
         }
+    if control:
+        sample = items[0] if items else {}
+        await control.emit(
+            "load_features_done",
+            f"已拉取 {len(items)} 个在售商品销量",
+            detail=(
+                f"来源 {features.get('source')}；样例「{sample.get('title') or sample.get('sku_id')}」"
+                f"销售额 {sample.get('gmv_30d')}、订单 {sample.get('orders_30d')}"
+            ),
+        )
     return {
         "features": features,
         "goal_mode": str(task_input.get("goal_mode") or "GMV"),
         "focus_slots": int(task_input.get("focus_slots") or 5),
         "top_n": int(task_input.get("top_n") or scoring_config.DEFAULT_TOP_N),
-        "next_action": "signal_risk",
+        "next_action": "explosion",
         "status": "RUNNING",
     }
 
@@ -112,17 +152,7 @@ async def node_score(state: ExplosionState, config: RunnableConfig) -> dict[str,
         await control.emit(
             "scored",
             f"已得到 Top {len(ranked['candidates'])} 候选",
-            data={
-                "pool_size": ranked["pool_size"],
-                "top": [
-                    {
-                        "sku_id": c.get("sku_id"),
-                        "explosion_score": c.get("explosion_score"),
-                        "quality_risk_level": c.get("quality_risk_level"),
-                    }
-                    for c in ranked["candidates"][:5]
-                ],
-            },
+            detail=f"候选池 {ranked['pool_size']}",
         )
     plan = init_plan(
         goal_mode=str(state.get("goal_mode") or "GMV"),
@@ -132,219 +162,134 @@ async def node_score(state: ExplosionState, config: RunnableConfig) -> dict[str,
         "ranked": ranked,
         "candidates": ranked["candidates"],
         "plan": plan,
-        "council_sources": {"rounds": []},
-        "revise_scope": "FULL",
-        "next_action": "signal_risk",
+        "next_action": "explosion",
     }
 
 
-async def node_signal_risk(
+async def node_explosion(
     state: ExplosionState, config: RunnableConfig
 ) -> dict[str, Any]:
+    """规则榜后：爆品 Agent 解读 + 有限进槽重排。"""
     runtime, control = _cfg(config)
     candidates = list(state.get("candidates") or [])
-    plan = dict(state.get("plan") or {})
-    plan["llm_round"] = int(plan.get("llm_round") or 0) + 1
-    round_no = plan["llm_round"]
-
     if control:
-        await control.checkpoint(progress=f"council_round_{round_no}")
-        await control.emit(
-            "council_round",
-            f"会签第 {round_no} 轮",
-            detail="信号官与风控官并行评估",
-            data={"round": round_no, "scope": "FULL"},
-        )
-        await control.emit("signal_risk", "信号官与风控官评估中…")
+        await control.emit("explosion", "爆品 Agent 解读并微调进槽…")
+        await control.checkpoint(progress="explosion")
 
-    (signal_items, sig_src), (risk_items, risk_src) = await asyncio.gather(
-        run_signal_council(candidates, runtime.llm_client),
-        run_risk_council(candidates, runtime.llm_client),
-    )
-
-    if control:
-        await control.checkpoint(progress="signal_risk_done")
-        veto_n = sum(1 for r in risk_items if r.get("veto"))
-        await control.emit(
-            "signal_risk_done",
-            "信号/风控意见已出",
-            detail=f"否决 {veto_n} 个；信号源={sig_src}，风控源={risk_src}",
-            data={"veto_count": veto_n},
-        )
-
-    return {
-        "plan": plan,
-        "signal_items": signal_items,
-        "risk_items": risk_items,
-        "signal_source": sig_src,
-        "risk_source": risk_src,
-        "revise_scope": "FULL",
-        "next_action": "strategy",
-    }
-
-
-async def node_strategy(
-    state: ExplosionState, config: RunnableConfig
-) -> dict[str, Any]:
-    runtime, control = _cfg(config)
-    candidates = list(state.get("candidates") or [])
-    plan = dict(state.get("plan") or {})
-    # 仅策略修订时也要推进轮次
-    if str(state.get("revise_scope") or "") == "STRATEGY_ONLY":
-        plan["llm_round"] = int(plan.get("llm_round") or 0) + 1
-        if control:
-            await control.checkpoint(progress=f"council_round_{plan['llm_round']}")
-            await control.emit(
-                "council_round",
-                f"会签第 {plan['llm_round']} 轮（仅策略）",
-                data={"scope": "STRATEGY_ONLY", "bias": plan.get("strategy_bias")},
-            )
-
-    if control:
-        await control.emit("strategy", "策略官分配动作与槽位…")
-
-    strategy_items, strat_src = await run_strategy_council(
-        candidates,
-        signal_items=list(state.get("signal_items") or []),
-        risk_items=list(state.get("risk_items") or []),
-        goal_mode=str(state.get("goal_mode") or "GMV"),
+    result = await _supervisor(runtime).run_explosion(
+        candidates=candidates,
         focus_slots=int(state.get("focus_slots") or 5),
-        bias=dict(plan.get("strategy_bias") or {}),
+        goal_mode=str(state.get("goal_mode") or "GMV"),
         llm=runtime.llm_client,
     )
+    data = dict(result.data or {})
+    out_cands = list(data.get("candidates") or candidates)
+    analysis = str(data.get("text") or "")
+    if control:
+        await control.emit(
+            "explosion_done",
+            "爆品解读完成",
+            detail=f"source={result.source}",
+        )
+    ranked = dict(state.get("ranked") or {})
+    ranked["candidates"] = out_cands
     return {
-        "plan": plan,
-        "strategy_items": strategy_items,
-        "strategy_source": strat_src,
-        "next_action": "strategy",
+        "candidates": out_cands,
+        "ranked": ranked,
+        "explosion_analysis": analysis,
+        "explosion_source": result.source or "template",
+        "next_action": "advise",
     }
 
 
-async def node_reduce_decide(
+async def node_load_advise_context(
     state: ExplosionState, config: RunnableConfig
 ) -> dict[str, Any]:
-    _, control = _cfg(config)
+    runtime, control = _cfg(config)
     candidates = list(state.get("candidates") or [])
-    focus_slots = int(state.get("focus_slots") or 5)
-    plan = dict(state.get("plan") or {})
-    sources = dict(state.get("council_sources") or {"rounds": []})
-    rounds = list(sources.get("rounds") or [])
-
-    council_reduce(
-        candidates,
-        signal_items=list(state.get("signal_items") or []),
-        risk_items=list(state.get("risk_items") or []),
-        strategy_items=list(state.get("strategy_items") or []),
-        focus_slots=focus_slots,
-    )
-
-    rounds.append(
-        {
-            "round": plan.get("llm_round"),
-            "signal": state.get("signal_source"),
-            "risk": state.get("risk_source"),
-            "strategy": state.get("strategy_source"),
-            "bias": plan.get("strategy_bias"),
-        }
-    )
-    sources["rounds"] = rounds
-
+    focus_ids = [
+        str(c.get("sku_id"))
+        for c in candidates
+        if c.get("in_focus_slot") and c.get("sku_id") is not None
+    ]
+    if not focus_ids:
+        focus_ids = [
+            str(c.get("sku_id")) for c in candidates[:5] if c.get("sku_id") is not None
+        ]
+    user_id = str(state.get("user_id") or "")
     if control:
         await control.emit(
-            "reduce_done",
-            "合并会签意见",
-            detail="已落实否决约束与槽位上限",
-            data={"focus_preview": _focus_preview(candidates)},
+            "advise_context",
+            "正在拉取板块流量以生成投放建议…",
+            detail=f"槽位 SKU {len(focus_ids)} 个",
         )
+        await control.checkpoint(progress="advise_context")
 
-    plan = plan_decide(
-        candidates,
-        plan,
-        signal_items=list(state.get("signal_items") or []),
-        risk_items=list(state.get("risk_items") or []),
-    )
-    decision = plan.get("decision")
-    if control:
-        await control.emit(
-            "campaign_decide",
-            "指挥裁决：" + str(decision),
-            detail=str(plan.get("revision_reason") or ""),
-            data={"decision": decision, "revision": plan.get("revision")},
+    try:
+        advise = await query_advise_context(
+            runtime,
+            user_id=user_id,
+            sku_ids=focus_ids,
+            days=7,
         )
-        await control.checkpoint(progress=f"decide_{decision}")
-
-    if decision == "REVISE":
-        from agents.explosion.campaign import MAX_LLM_ROUNDS
-        from harness.memory.progress import ProgressBreaker
-
-        # 进度感知：动作桶指纹不变则计空转，连续空转则强制结束
-        fp = "|".join(
-            f"{c.get('sku_id')}:{c.get('action_bucket')}:{c.get('in_focus_slot')}"
-            for c in candidates
-        )
-        breaker_state = plan.get("_progress_breaker") or {}
-        breaker = ProgressBreaker(
-            max_idle=int(breaker_state.get("max_idle") or 2),
-            idle=int(breaker_state.get("idle") or 0),
-            last_fingerprint=str(breaker_state.get("last_fingerprint") or ""),
-        )
-        obs = breaker.observe(fp, label="revise")
-        plan["_progress_breaker"] = {
-            "max_idle": breaker.max_idle,
-            "idle": breaker.idle,
-            "last_fingerprint": breaker.last_fingerprint,
+    except Exception as exc:
+        logger.exception("query_advise_context failed")
+        advise = {
+            "sku_ids": focus_ids,
+            "plates": [],
+            "store": {},
+            "source": "error",
+            "message": str(exc),
         }
 
-        if obs == "TRIPPED" or int(plan.get("llm_round") or 0) >= MAX_LLM_ROUNDS:
-            plan["decision"] = "FINISH"
-            plan["plan_degraded"] = True
-            reason = plan.get("revision_reason") or ""
-            if obs == "TRIPPED":
-                reason = (reason + "；" if reason else "") + "修订无实质进展，进度熔断"
-            else:
-                reason = (reason + "；" if reason else "") + "大轮达上限强制结束"
-            plan["revision_reason"] = reason
-            if control:
-                await control.emit(
-                    "council_degraded",
-                    "会签降级结束",
-                    detail=reason,
-                )
-            return {
-                "candidates": candidates,
-                "plan": plan,
-                "council_sources": sources,
-                "next_action": "finish",
-            }
-
-        plan = apply_revise(plan)
-        scope = str(plan.get("revise_scope") or "STRATEGY_ONLY")
-        if control:
-            await control.emit(
-                "revise",
-                f"发现不合理，开始第 {plan['revision']} 次修订",
-                detail=str(plan.get("revision_reason") or ""),
-                data={"bias": plan.get("strategy_bias"), "scope": scope},
-            )
-        return {
-            "candidates": candidates,
-            "plan": plan,
-            "council_sources": sources,
-            "revise_scope": scope,
-            "next_action": "strategy" if scope == "STRATEGY_ONLY" else "signal_risk",
-        }
-
+    plates = advise.get("plates") or []
     if control:
         await control.emit(
-            "council_done",
-            "会签结束",
-            detail=f"修订 {plan.get('revision')} 次，降级={bool(plan.get('plan_degraded'))}",
-            data={"focus_preview": _focus_preview(candidates)},
+            "advise_context_done",
+            "板块辅源已就绪",
+            detail=f"source={advise.get('source')}，板块 {len(plates)} 条",
         )
     return {
-        "candidates": candidates,
-        "plan": plan,
-        "council_sources": sources,
+        "advise_context": advise,
+        "next_action": "advise",
+    }
+
+
+async def node_write_advise(
+    state: ExplosionState, config: RunnableConfig
+) -> dict[str, Any]:
+    runtime, control = _cfg(config)
+    candidates = list(state.get("candidates") or [])
+    advise = dict(state.get("advise_context") or {})
+    goal_mode = str(state.get("goal_mode") or "GMV")
+    if control:
+        await control.emit(
+            "advise_llm",
+            "正在结合板块流量撰写投放建议…",
+            detail=f"板块 {len(advise.get('plates') or [])} 条",
+        )
+        await control.checkpoint(progress="advise_llm")
+
+    async def _on_delta(delta: str) -> None:
+        if control:
+            await control.emit_llm_delta(delta)
+
+    advised = await _supervisor(runtime).run_placement_advise(
+        candidates=candidates,
+        advise_context=advise,
+        goal_mode=goal_mode,
+        on_delta=_on_delta if control else None,
+    )
+    written = dict(advised.data or {})
+    if control:
+        await control.emit(
+            "advise_llm_done",
+            "投放建议已生成",
+            detail=f"source={written.get('source')}",
+        )
+    return {
+        "advise_llm_text": str(written.get("text") or ""),
+        "advise_llm_source": str(written.get("source") or advised.source or "template"),
         "next_action": "finish",
     }
 
@@ -361,6 +306,9 @@ async def node_report_upsert(
     ranked["candidates"] = list(state.get("candidates") or [])
     plan = dict(state.get("plan") or {})
     features = state.get("features") or {}
+    advise_context = state.get("advise_context") or {}
+    advise_llm_text = state.get("advise_llm_text")
+    include_advise = bool(task_input.get("include_advise"))
     goal_mode = str(state.get("goal_mode") or "GMV")
     focus_slots = int(state.get("focus_slots") or 5)
 
@@ -369,10 +317,17 @@ async def node_report_upsert(
         goal_mode=goal_mode,
         slots=focus_slots,
         plan=plan,
+        features=features,
+        thinking_events=list(control.events) if control else [],
+        task_input=task_input,
+        advise_context=advise_context if include_advise else {},
+        advise_llm_text=advise_llm_text if include_advise else None,
+        offer_advise=not include_advise,
+        explosion_analysis=str(state.get("explosion_analysis") or ""),
     )
 
     if control:
-        await control.emit("report_html", "正在生成可下载分析报表…")
+        await control.emit("report_html", "正在生成分析报表…")
         await control.checkpoint(progress="report_html")
 
     report_files = await build_explosion_report(
@@ -391,22 +346,15 @@ async def node_report_upsert(
             "user_id": user_id,
             "snapshot_date": features.get("snapshot_date"),
             "scoring_version": ranked.get("scoring_version"),
-            "council_version": COUNCIL_VERSION,
+            "agent_version": AGENT_VERSION,
             "time_window_days": int(task_input.get("time_window_days") or 30),
             "top_n": ranked.get("top_n"),
             "item_count": len(ranked["candidates"]),
             "goal_mode": goal_mode,
             "focus_slots": focus_slots,
-            "plan_degraded": bool(plan.get("plan_degraded")),
             "focus_count": sum(1 for c in ranked["candidates"] if c.get("in_focus_slot")),
             "summary": summary,
-            "council_meta": {
-                "revision": plan.get("revision"),
-                "llm_round": plan.get("llm_round"),
-                "history": plan.get("history"),
-                "sources": state.get("council_sources"),
-                "orchestrator": "langgraph",
-            },
+            "explosion_source": state.get("explosion_source"),
         },
         "items": ranked["candidates"],
     }
@@ -432,10 +380,7 @@ async def node_report_upsert(
         "row_count": features.get("row_count"),
         "pool_size": ranked.get("pool_size"),
         "scoring_version": ranked.get("scoring_version"),
-        "council_version": COUNCIL_VERSION,
-        "plan_degraded": bool(plan.get("plan_degraded")),
-        "council_revision": plan.get("revision"),
-        "council_rounds": plan.get("llm_round"),
+        "agent_version": AGENT_VERSION,
         "top_n": ranked.get("top_n"),
         "candidates": ranked["candidates"],
         "html_source": report_files["html_source"],
@@ -446,11 +391,18 @@ async def node_report_upsert(
         "input": task_input,
         "mock": bool(features.get("mock")),
         "orchestrator": "langgraph",
+        "advice_offer_pending": not include_advise,
+        "include_advise": include_advise,
+        "advise_llm_source": state.get("advise_llm_source"),
+        "explosion_source": state.get("explosion_source"),
         "message": (
             f"已生成 Top {ranked.get('top_n')} 作战清单"
-            f"（LangGraph 会签{plan.get('llm_round')}轮/修订{plan.get('revision')}次，"
-            f"HTML={report_files['html_source']}）。"
-            "前端请根据 download 展示下载按钮。"
+            f"（规则打分 + 爆品 Agent，HTML={report_files['html_source']}）。"
+            + (
+                "已含投放建议。"
+                if include_advise
+                else "榜单已出，等待确认是否写投放建议。"
+            )
         ),
     }
     return {
@@ -461,4 +413,3 @@ async def node_report_upsert(
         "result": result,
         "next_action": "finish",
     }
-

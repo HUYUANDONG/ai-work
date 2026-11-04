@@ -41,6 +41,8 @@ class ChatRequest(BaseModel):
     last_task_input: dict[str, Any] | None = None
     active_task_id: str | None = None
     queue_message: bool = False
+    working_summary: str | None = None
+    episodes: list[dict[str, Any]] | None = None
 
 
 class NeedTask(BaseModel):
@@ -61,6 +63,8 @@ class ChatResponse(BaseModel):
         clarify_pending: 为 true 时禁止 need_task。
         queue_ack: 追问已排队时的回执信息。
         ui_hints: 前端提示（如下载、思考流、取消按钮）。
+        working_summary: 深度摘要后回写 Java；未压缩时可空。
+        summary_through_message_id: 摘要覆盖到的最大消息 id（含）。
     """
 
     intent: Intent
@@ -69,4 +73,6 @@ class ChatResponse(BaseModel):
     clarify_pending: bool = False
     queue_ack: dict[str, Any] | None = None
     ui_hints: dict[str, Any] | None = None
+    working_summary: str | None = None
+    summary_through_message_id: int | None = None
 

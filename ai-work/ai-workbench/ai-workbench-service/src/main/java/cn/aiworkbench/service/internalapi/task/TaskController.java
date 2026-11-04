@@ -129,4 +129,41 @@ public class TaskController {
         taskRuntime.fail(taskId, String.valueOf(req.get("lease_token")), req);
         return ResponseEntity.ok().build();
     }
+
+    /**
+     * Python / 内部写入暂停、取消；继续用 resume。
+     *
+     * @param taskId 任务
+     * @param body   action / reason
+     * @return 结果
+     */
+    @Operation(summary = "任务控制 pause|cancel|resume")
+    @PostMapping("/{taskId}/control")
+    public Map<String, Object> control(
+            @PathVariable String taskId,
+            @RequestBody Map<String, Object> body) {
+        Map<String, Object> req = body == null ? Map.of() : body;
+        String action = String.valueOf(req.getOrDefault("action", "")).trim().toLowerCase();
+        String reason = String.valueOf(req.getOrDefault("reason", ""));
+        return switch (action) {
+            case "pause" -> {
+                taskRuntime.requestPause(taskId, reason.isBlank() ? "用户暂停" : reason);
+                yield Map.of("ok", true, "action", "pause", "task_id", taskId);
+            }
+            case "cancel" -> {
+                taskRuntime.requestCancel(taskId, reason.isBlank() ? "用户取消" : reason);
+                yield Map.of("ok", true, "action", "cancel", "task_id", taskId);
+            }
+            case "resume", "continue" -> {
+                Map<String, Object> created = taskRuntime.resumePaused(taskId);
+                yield Map.of(
+                        "ok", true,
+                        "action", "resume",
+                        "task_id", String.valueOf(created.get("task_id")),
+                        "resumed_from", taskId);
+            }
+            default -> throw cn.aiworkbench.service.internalapi.support.InternalApiException
+                    .badRequest("action 须为 pause|cancel|resume");
+        };
+    }
 }

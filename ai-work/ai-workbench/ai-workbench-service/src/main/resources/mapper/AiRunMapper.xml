@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.aiworkbench.service.persist.mapper.AiRunMapper">
+
+    <insert id="insertRunning">
+        INSERT INTO ai_run (run_id, task_id, lease_token, run_status, worker_id)
+        VALUES (#{runId}, #{taskId}, #{leaseToken}, 'RUNNING', #{workerId})
+        ON DUPLICATE KEY UPDATE
+            lease_token = VALUES(lease_token),
+            worker_id = VALUES(worker_id),
+            run_status = 'RUNNING'
+    </insert>
+
+    <update id="markFinished">
+        UPDATE ai_run
+        SET run_status = #{status},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            finished_at = CURRENT_TIMESTAMP(3)
+        WHERE run_id = #{runId}
+    </update>
+
+</mapper>

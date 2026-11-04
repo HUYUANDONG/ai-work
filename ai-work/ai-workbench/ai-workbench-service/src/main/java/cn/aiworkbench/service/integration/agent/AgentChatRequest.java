@@ -34,4 +34,8 @@ public class AgentChatRequest {
     private Map<String, Object> lastTaskInput;
     private String activeTaskId;
     private boolean queueMessage;
+    /** 旧轮压缩摘要，供 Python working/summary 层。 */
+    private String workingSummary;
+    /** 已完成任务 episode。 */
+    private List<Map<String, Object>> episodes;
 }

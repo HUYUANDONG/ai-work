@@ -75,12 +75,24 @@ async def fail_task(
     lease_token: str,
     error_code: str,
     message: str,
+    extra: dict[str, Any] | None = None,
 ) -> None:
-    """标记失败。"""
+    """
+    标记失败 / 暂停 / 取消。
+
+    Args:
+        runtime: AppRuntime。
+        task_id: 任务 ID。
+        lease_token: 租约。
+        error_code: 错误码（含 PAUSED / CANCELLED）。
+        message: 说明。
+        extra: 额外写入 fail_body 的字段（如 graph_thread_id）。
+    """
     await runtime.java_client.fail_task(
         task_id,
         lease_token=lease_token,
         error_code=error_code,
         message=message,
+        extra=extra,
     )
 
