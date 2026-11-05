@@ -1,5 +1,5 @@
 """
-用阿里云百炼决策模型做对话意图 Choice 路由。
+对话意图：无上下文规则先判；判成 CLARIFY 时再交给百炼决策模型或千问。
 
 模型：``decision-model-preview``（System One：choice / noul / score）。
 环境变量：``DASHSCOPE_API_KEY``；文档：https://help.aliyun.com/zh/model-studio/decision-model-api
@@ -359,6 +359,7 @@ async def classify_with_decision(
     session_state: dict | None = None,
     chat_base_url: str = "",
     chat_model: str = "qwen-plus",
+    memory_note: str = "",
 ) -> IntentDecision:
     """
     异步包装意图分类；有 Workspace 走决策模型，否则走千问封闭分类。
@@ -391,6 +392,7 @@ async def classify_with_decision(
         "do not invent scores; expensive advise is a separate step.\n"
         "If the user only supplies a time window / goal / slot count after an "
         "explosion or quality turn, keep that previous intent.\n"
+        f"{(memory_note or '').strip()}\n"
         f"{session_block}\n"
         f"Recent conversation (truncated):\n{history_text or '(empty)'}\n"
         f"User message:\n{(message or '').strip()}"
@@ -548,9 +550,10 @@ async def resolve_intent(
     session_state: dict | None = None,
     chat_base_url: str = "",
     chat_model: str = "qwen-plus",
+    memory_note: str = "",
 ) -> IntentDecision:
     """
-    统一入口：意图只走大模型（决策模型 / 千问），不做关键词事后纠偏。
+    统一入口：先用无上下文的规则；规则得到 CLARIFY 时，再把会话上下文交给大模型。
 
     Args:
         message: 用户原文。
@@ -558,7 +561,7 @@ async def resolve_intent(
         enabled: 是否启用决策模型。
         model: 模型名。
         min_confidence: 置信度门槛。
-        allow_rules_fallback: 仅无 Key / 调用失败时是否用规则兜底；默认应 false。
+        allow_rules_fallback: 规则判不出且无模型时，是否再用「带上一轮意图」的规则兜底。
         base_url: 可选网关覆盖。
         workspace_id: 百炼业务空间 ID。
         region: 地域。
@@ -571,6 +574,18 @@ async def resolve_intent(
     Returns:
         IntentDecision: 路由意图。
     """
+    from agents.chat.intent import classify_message_rules, parse_time_window_days
+
+    # 规则只看本句，不看上一轮。能定下来就不再调模型。
+    bare = classify_message_rules(message, last_intent=None)
+    if bare != "CLARIFY":
+        return IntentDecision(
+            intent=bare,
+            confidence=0.9,
+            source="rules",
+            window_days=parse_time_window_days(message),
+        )
+
     if not enabled or not (api_key or "").strip():
         if allow_rules_fallback:
             return classify_with_rules_fallback(message, last_intent=last_intent)
@@ -595,6 +610,7 @@ async def resolve_intent(
             session_state=session_state,
             chat_base_url=chat_base_url,
             chat_model=chat_model,
+            memory_note=memory_note,
         )
     except Exception as exc:  # noqa: BLE001 — 降级路径需吞掉并记录
         logger.exception("Decision model intent classification failed: %s", exc)

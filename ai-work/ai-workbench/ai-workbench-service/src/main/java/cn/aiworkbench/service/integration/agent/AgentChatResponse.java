@@ -23,6 +23,8 @@ public class AgentChatResponse {
     private String workingSummary;
     /** 摘要覆盖到的最大 ai_message.id（含）。 */
     private Long summaryThroughMessageId;
+    /** 本轮要写入该运营画像的键值；空则不改画像。 */
+    private Map<String, Object> profilePatch;
 
     /**
      * 需要 Java 创建的长任务。

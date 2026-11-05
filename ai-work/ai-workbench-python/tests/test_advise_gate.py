@@ -15,7 +15,6 @@ from agents.chat.intent import (
     wants_explosion_advise,
 )
 from agents.advise.llm import write_placement_advise
-from agents.explosion.lg_graph import _after_explosion
 
 
 class AdviseGateTest(unittest.TestCase):
@@ -39,16 +38,6 @@ class AdviseGateTest(unittest.TestCase):
         self.assertTrue(is_advise_decline("不用"))
         self.assertFalse(is_advise_affirm("质检一下"))
         self.assertIn("投放建议", ADVICE_OFFER_QUESTION)
-
-    def test_graph_routes_by_include_advise(self) -> None:
-        self.assertEqual(
-            _after_explosion({"task_input": {"include_advise": False}}),
-            "report",
-        )
-        self.assertEqual(
-            _after_explosion({"task_input": {"include_advise": True}}),
-            "advise",
-        )
 
     def test_write_placement_falls_back_without_llm(self) -> None:
         async def _run() -> dict[str, Any]:

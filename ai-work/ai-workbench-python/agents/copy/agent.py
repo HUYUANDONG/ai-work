@@ -15,6 +15,7 @@ from typing import Any
 
 from agents.base import BaseAgent
 from clients.llm_client import LlmClient
+from harness.memory.long_term import prompt_with_memory
 from schemas.agent import AgentResult
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,14 @@ class CopyAgent(BaseAgent):
         super().__init__(name="copy", timeout=timeout)
         self.llm = llm
 
-    async def _draft_copy(self, llm: LlmClient, bundle: dict[str, Any], sku: str) -> str:
+    async def _draft_copy(
+        self,
+        llm: LlmClient,
+        bundle: dict[str, Any],
+        sku: str,
+        *,
+        memory_preface: str = "",
+    ) -> str:
         user = json.dumps(
             {
                 "sku_id": sku,
@@ -117,7 +125,11 @@ class CopyAgent(BaseAgent):
             },
             ensure_ascii=False,
         )
-        raw = await llm.chat(system=COPY_SYSTEM, user=user, json_mode=False)
+        raw = await llm.chat(
+            system=prompt_with_memory(COPY_SYSTEM, memory_preface),
+            user=user,
+            json_mode=False,
+        )
         return _strip_fence(raw or "").strip()[:120]
 
     async def _llm_compliance(
@@ -127,6 +139,7 @@ class CopyAgent(BaseAgent):
         draft: str,
         bundle: dict[str, Any],
         sku: str,
+        memory_preface: str = "",
     ) -> dict[str, Any]:
         user = json.dumps(
             {
@@ -137,12 +150,17 @@ class CopyAgent(BaseAgent):
             },
             ensure_ascii=False,
         )
-        raw = await llm.chat(system=COMPLIANCE_SYSTEM, user=user, json_mode=True)
+        raw = await llm.chat(
+            system=prompt_with_memory(COMPLIANCE_SYSTEM, memory_preface),
+            user=user,
+            json_mode=True,
+        )
         return parse_compliance_result(raw, draft=draft)
 
     async def _execute(self, **kwargs: Any) -> AgentResult:
         bundles = list(kwargs.get("bundles") or [])
         llm: LlmClient | None = kwargs.get("llm") or self.llm
+        memory_preface = str(kwargs.get("memory_preface") or "")
         copies: list[dict[str, Any]] = []
         source = "template"
 
@@ -150,11 +168,17 @@ class CopyAgent(BaseAgent):
             sku = str(bundle.get("sku_id") or "")
             if llm is not None and llm.enabled:
                 try:
-                    draft = await self._draft_copy(llm, bundle, sku)
+                    draft = await self._draft_copy(
+                        llm, bundle, sku, memory_preface=memory_preface
+                    )
                     if not draft:
                         draft = _template_copy(bundle)
                     checked = await self._llm_compliance(
-                        llm, draft=draft, bundle=bundle, sku=sku
+                        llm,
+                        draft=draft,
+                        bundle=bundle,
+                        sku=sku,
+                        memory_preface=memory_preface,
                     )
                     copies.append(
                         {

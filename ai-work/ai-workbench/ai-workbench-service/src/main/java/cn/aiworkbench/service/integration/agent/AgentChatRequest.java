@@ -38,4 +38,8 @@ public class AgentChatRequest {
     private String workingSummary;
     /** 已完成任务 episode。 */
     private List<Map<String, Object>> episodes;
+    /** 系统长期记忆，如 business_line。 */
+    private Map<String, String> systemMemory;
+    /** 该运营跨会话画像，如 margin_min。 */
+    private Map<String, String> userProfile;
 }

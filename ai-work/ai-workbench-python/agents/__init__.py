@@ -1,35 +1,16 @@
 """
-Agent 包：叶子按目录分类 + Chat 入口 + Explosion/Quality 专家图。
+Agent 包：叶子按目录分类，对话由 OpsSupervisor 编排。
 
-- 叶子：``decision`` / ``recommend`` / ``advise`` / ``copy`` / …
-- 编排：``Supervisor`` / ``WorkbenchSupervisor`` / ``OpsSupervisor``
-- 任务专家：``TaskAgent`` 注册表
+质检仍用 LangGraph，在对话这一轮里直接跑完。
 """
 
 from agents.base import BaseAgent
 from agents.supervisor.ops import OpsSupervisor
-from agents.supervisor.workbench import (
-    ExplosionSupervisor,
-    Supervisor,
-    WorkbenchSupervisor,
-)
-from agents.task_agent import (
-    CallableTaskAgent,
-    TaskAgent,
-    get_task_agent,
-    register_task_agent,
-    supported_task_types,
-)
+from agents.supervisor.workbench import Supervisor, WorkbenchSupervisor
 
 __all__ = [
     "BaseAgent",
-    "CallableTaskAgent",
-    "ExplosionSupervisor",
     "OpsSupervisor",
     "Supervisor",
-    "TaskAgent",
     "WorkbenchSupervisor",
-    "get_task_agent",
-    "register_task_agent",
-    "supported_task_types",
 ]

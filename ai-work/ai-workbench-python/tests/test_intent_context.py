@@ -163,11 +163,23 @@ class IntentContextTest(unittest.TestCase):
 
 
 class DecisionFallbackTest(unittest.IsolatedAsyncioTestCase):
-    """无 Key：默认 CLARIFY；显式打开规则才降级。"""
+    """规则能判定则不调模型；判不出才看 Key / 上下文兜底。"""
 
-    async def test_missing_key_clarify_without_rules(self) -> None:
+    async def test_clear_message_uses_rules_without_key(self) -> None:
         decision = await resolve_intent(
             "筛爆品",
+            api_key="",
+            enabled=True,
+            model="decision-model-preview",
+            min_confidence=0.75,
+            allow_rules_fallback=False,
+        )
+        self.assertEqual(decision.intent, "EXPLOSION")
+        self.assertEqual(decision.source, "rules")
+
+    async def test_ambiguous_without_key_stays_clarify(self) -> None:
+        decision = await resolve_intent(
+            "近7天",
             api_key="",
             enabled=True,
             model="decision-model-preview",
@@ -177,17 +189,61 @@ class DecisionFallbackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.intent, "CLARIFY")
         self.assertEqual(decision.source, "decision_disabled")
 
-    async def test_missing_key_uses_rules_when_allowed(self) -> None:
+    async def test_ambiguous_fallback_inherits_last_intent(self) -> None:
         decision = await resolve_intent(
-            "筛爆品",
+            "近7天",
             api_key="",
             enabled=True,
             model="decision-model-preview",
             min_confidence=0.75,
             allow_rules_fallback=True,
+            last_intent="EXPLOSION",
         )
         self.assertEqual(decision.intent, "EXPLOSION")
         self.assertEqual(decision.source, "rules_fallback")
+
+    async def test_rules_hit_does_not_call_llm(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "agents.chat.decision_intent.classify_with_decision",
+            new=AsyncMock(side_effect=AssertionError("should not call llm")),
+        ):
+            decision = await resolve_intent(
+                "质检一下",
+                api_key="sk-test",
+                enabled=True,
+                model="decision-model-preview",
+                min_confidence=0.75,
+                allow_rules_fallback=False,
+            )
+        self.assertEqual(decision.intent, "QUALITY")
+        self.assertEqual(decision.source, "rules")
+
+    async def test_rules_miss_calls_llm(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        fake = AsyncMock(
+            return_value=IntentDecision(
+                intent="EXPLOSION",
+                confidence=0.91,
+                source="qwen",
+                window_days=7,
+            )
+        )
+        with patch("agents.chat.decision_intent.classify_with_decision", new=fake):
+            decision = await resolve_intent(
+                "近7天",
+                api_key="sk-test",
+                enabled=True,
+                model="qwen-plus",
+                min_confidence=0.75,
+                allow_rules_fallback=False,
+                last_intent="EXPLOSION",
+            )
+        fake.assert_awaited()
+        self.assertEqual(decision.intent, "EXPLOSION")
+        self.assertEqual(decision.source, "qwen")
 
 
 class CheckpointerTest(unittest.TestCase):

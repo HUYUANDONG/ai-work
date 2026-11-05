@@ -9,7 +9,6 @@ from harness.memory.dialog_state import (
     PHASE_AWAITING_CLARIFY,
     PHASE_AWAITING_COPY,
     PHASE_IDLE,
-    PHASE_TASK_RUNNING,
     build_router_snapshot,
     format_router_state,
 )
@@ -29,7 +28,7 @@ class DialogStateTest(unittest.TestCase):
                 advice_offer_pending=True,
                 active_task_id="t1",
             )["phase"],
-            PHASE_TASK_RUNNING,
+            PHASE_AWAITING_ADVISE,
         )
         self.assertEqual(
             build_router_snapshot(awaiting_clarify=True)["phase"],

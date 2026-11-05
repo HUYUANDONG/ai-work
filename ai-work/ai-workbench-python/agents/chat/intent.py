@@ -1,8 +1,7 @@
 """
-对话意图与缺参默认（规则版，不依赖 LLM）。
-对话意图辅助：缺参默认、话术；规则分类仅作决策模型降级。
+对话意图辅助：缺参默认、话术，以及无上下文的规则粗分类。
 
-正式路径见 ``agents.chat.decision_intent``（阿里云百炼 decision-model-preview）。
+正式路径见 ``agents.chat.decision_intent``：规则先判，判不出再交给带上下文的模型。
 """
 
 from __future__ import annotations

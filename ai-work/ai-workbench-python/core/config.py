@@ -21,7 +21,6 @@ class Settings(BaseSettings):
         java_mock_features: 是否用本地 fixture 充当特征。
         dashscope_api_key: 阿里云百炼 API Key。
         decision_*: 决策模型意图路由相关开关与门槛。
-        worker_*: Worker 轮询与租约。
     """
 
     model_config = SettingsConfigDict(
@@ -74,13 +73,6 @@ class Settings(BaseSettings):
     )
     hmac_secret_in: str = Field(default="", validation_alias="WB_HMAC_SECRET_IN")
     hmac_secret_out: str = Field(default="", validation_alias="WB_HMAC_SECRET_OUT")
-    worker_poll_interval_seconds: int = Field(
-        default=2,
-        validation_alias="WB_WORKER_POLL_INTERVAL_SECONDS",
-    )
-    worker_lease_seconds: int = Field(default=60, validation_alias="WB_WORKER_LEASE_SECONDS")
-    worker_concurrency: int = Field(default=2, validation_alias="WB_WORKER_CONCURRENCY")
-
     # 百炼 OpenAI 兼容 Chat Completions（报表分析文案；不算正式分）
     llm_api_key: str = Field(default="", validation_alias="WB_LLM_API_KEY")
     llm_base_url: str = Field(
@@ -112,12 +104,6 @@ class Settings(BaseSettings):
         le=0.95,
         validation_alias="WB_CHAT_SUMMARY_PRESSURE",
     )
-    # 会签 Signal/Risk/Strategy 默认规则；true 时才对精简候选调 LLM
-    council_llm_enabled: bool = Field(
-        default=False,
-        validation_alias="WB_COUNCIL_LLM_ENABLED",
-    )
-
     @property
     def resolved_llm_api_key(self) -> str:
         """报表 LLM Key：优先 WB_LLM_API_KEY，否则复用 DASHSCOPE_API_KEY。"""

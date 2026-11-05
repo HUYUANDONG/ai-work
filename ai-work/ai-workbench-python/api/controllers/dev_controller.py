@@ -1,4 +1,4 @@
-"""本地联调 Controller：爆品 / 质检 / 单品深挖 / mock 入队 / 下载报表。"""
+"""本地联调：质检、单品深挖、下载已有报表。"""
 
 from __future__ import annotations
 
@@ -21,16 +21,6 @@ from services.sku_deep_service import SkuDeepService
 router = APIRouter(prefix="/internal/dev", tags=["dev"])
 
 
-@router.post("/run-explosion")
-@router.post("/run-explosion-step1")  # 兼容旧路径
-async def run_explosion(
-    body: dict[str, Any],
-    explosion_service: ExplosionService = Depends(get_explosion_service),
-) -> dict[str, Any]:
-    """跑爆品流水线；返回 download 约定。"""
-    return await explosion_service.run_pipeline(body)
-
-
 @router.post("/run-quality")
 async def run_quality(
     body: dict[str, Any],
@@ -47,39 +37,6 @@ async def sku_deep(
 ) -> dict[str, Any]:
     """单品深挖（同步）。"""
     return await sku_deep_service.analyze(body)
-
-
-@router.post("/enqueue-task")
-async def enqueue_task(
-    body: dict[str, Any],
-    runtime: AppRuntime = Depends(get_runtime),
-) -> dict[str, Any]:
-    """
-    mock 模式下把任务放入内存队列，供 Worker claim。
-
-    body: task_type / input / conversation_id / task_id（可选）。
-    """
-    if not runtime.java_client.mock_features:
-        raise HTTPException(
-            status_code=400,
-            detail="enqueue-task only works when WB_JAVA_MOCK_FEATURES=true",
-        )
-    task = runtime.java_client.enqueue_mock_task(body)
-    return {"ok": True, "task": task}
-
-
-@router.post("/worker-once")
-async def worker_once(
-    runtime: AppRuntime = Depends(get_runtime),
-) -> dict[str, Any]:
-    """领取并执行一条任务（便于无常驻 Worker 时联调）。"""
-    from app.worker import execute_claimed, poll_once
-
-    task = await poll_once(runtime)
-    if task is None:
-        return {"ok": True, "claimed": False, "message": "no task"}
-    result = await execute_claimed(runtime, task)
-    return {"ok": True, "claimed": True, "task_id": task.get("task_id"), "result": result}
 
 
 @router.get("/reports/{task_id}")

@@ -13,7 +13,6 @@ PHASE_IDLE = "IDLE"
 PHASE_AWAITING_CLARIFY = "AWAITING_CLARIFY"
 PHASE_AWAITING_ADVISE = "AWAITING_ADVISE_CONFIRM"
 PHASE_AWAITING_COPY = "AWAITING_COPY_CONFIRM"
-PHASE_TASK_RUNNING = "TASK_RUNNING"
 PHASE_DONE = "DONE"
 
 _TASK_KEYS = (
@@ -41,20 +40,18 @@ def resolve_phase(
     ops_phase: str | None = None,
 ) -> str:
     """
-    由标志位推导当前相位（优先级：任务中 > ops 相位 > 等建议确认 > 等澄清 > 空闲）。
+    由标志位推导当前相位（优先级：ops 相位 > 等建议确认 > 等澄清 > 空闲）。
 
     Args:
         advice_offer_pending: 榜单已出，等「要/不用」。
         awaiting_clarify: 上一轮返回了 clarify_pending。
-        active_task_id: 进行中的长任务。
-        queue_message: 本轮要入队到长任务。
+        active_task_id: 保留入参，不再改相位。
+        queue_message: 保留入参，不再改相位。
         ops_phase: 运营流水线显式相位（优先）。
 
     Returns:
         str: 相位枚举名。
     """
-    if active_task_id or queue_message:
-        return PHASE_TASK_RUNNING
     phase = str(ops_phase or "").strip().upper()
     if phase in {PHASE_AWAITING_ADVISE, PHASE_AWAITING_COPY, PHASE_DONE}:
         return phase
@@ -97,7 +94,6 @@ def build_router_snapshot(
             or phase == PHASE_AWAITING_ADVISE,
             "awaiting_copy": phase == PHASE_AWAITING_COPY,
             "awaiting_clarify": bool(awaiting_clarify),
-            "task_running": phase == PHASE_TASK_RUNNING,
         },
     }
     if active_task_id:
@@ -144,6 +140,4 @@ def format_router_state(snapshot: dict[str, Any] | None) -> str:
             "Previous turn asked clarifying question; "
             "map clear answers to EXPLOSION/QUALITY/SKU_DEEP."
         )
-    if flags.get("task_running"):
-        lines.append("A long task is running; prefer queue/control, not a new conflicting task.")
     return "\n".join(lines)

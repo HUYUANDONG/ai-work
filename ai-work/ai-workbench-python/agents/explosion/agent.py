@@ -13,6 +13,7 @@ from typing import Any
 
 from agents.base import BaseAgent
 from clients.llm_client import LlmClient
+from harness.memory.long_term import prompt_with_memory
 from harness.memory.slim import slim_candidates_for_llm
 from schemas.agent import AgentResult
 
@@ -177,6 +178,7 @@ class ExplosionAgent(BaseAgent):
         goal_mode = str(kwargs.get("goal_mode") or "GMV")
         inventory_summary = str(kwargs.get("inventory_summary") or "").strip()
         llm: LlmClient | None = kwargs.get("llm") or self.llm
+        system = prompt_with_memory(EXPLOSION_SYSTEM, str(kwargs.get("memory_preface") or ""))
 
         # 默认先按规则分进槽，LLM 可再微调
         apply_focus_and_actions(candidates, focus_slots=focus_slots)
@@ -199,7 +201,7 @@ class ExplosionAgent(BaseAgent):
                     ensure_ascii=False,
                 )
                 raw = await llm.chat(
-                    system=EXPLOSION_SYSTEM, user=user, json_mode=True
+                    system=system, user=user, json_mode=True
                 )
                 parsed = _parse_llm(raw or "")
                 analysis = str(parsed.get("analysis") or "").strip()

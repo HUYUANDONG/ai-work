@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.aiworkbench.service.conversation.mapper.AiLongMemoryMapper">
+
+    <select id="selectByOwner"
+            resultType="cn.aiworkbench.service.conversation.infra.AiLongMemoryDO">
+        SELECT id, scope, owner_id, mem_key, mem_value, source
+        FROM ai_long_memory
+        WHERE scope = #{scope}
+          AND owner_id = #{ownerId}
+    </select>
+
+    <insert id="upsert">
+        INSERT INTO ai_long_memory (scope, owner_id, mem_key, mem_value, source)
+        VALUES (#{scope}, #{ownerId}, #{memKey}, #{memValue}, #{source})
+        ON DUPLICATE KEY UPDATE
+            mem_value = VALUES(mem_value),
+            source = VALUES(source),
+            updated_at = CURRENT_TIMESTAMP(3)
+    </insert>
+
+</mapper>

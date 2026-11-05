@@ -10,8 +10,8 @@ FastAPI 没有官方 Nest 模块系统，本仓用目录约定等价分层。
 | `services/` | Service | 用例编排，调用 agents / clients |
 | `schemas/` | DTO | Pydantic 请求响应 |
 | `core/` | ConfigModule | 环境配置 |
-| `agents/` | 领域 Feature（非 HTTP） | Chat / Explosion / Quality 图 |
-| `harness/` | 任务配套 | `AppRuntime`（共享依赖盒，≠ 网上 Agent Harness 产品）、按 task_type 路由、Checkpoint |
+| `agents/` | 领域 Feature（非 HTTP） | 对话编排、爆品叶子、质检图 |
+| `harness/` | 运行时配套 | `AppRuntime`（共享依赖盒）、Checkpoint |
 | `clients/` | Infrastructure HTTP | Java 内部 API |
 | `tools/` | 薄适配 | query_features 等 |
 | `scoring/` | 领域纯函数 | 打分 / 规则 |
@@ -25,4 +25,4 @@ controllers → services → agents / scoring / tools → clients / db
                 ↘ schemas、core
 ```
 
-启动：`uvicorn app.main:app`。Worker：`python -m app.worker`（任务领取，不经 Controller）。
+启动：`uvicorn app.main:app`。营销和质检都在对话这一轮里做完。

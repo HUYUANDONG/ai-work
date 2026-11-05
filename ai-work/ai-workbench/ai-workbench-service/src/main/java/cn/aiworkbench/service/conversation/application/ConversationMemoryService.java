@@ -1,8 +1,10 @@
 package cn.aiworkbench.service.conversation.application;
 
 import cn.aiworkbench.service.conversation.infra.AiConversationDO;
+import cn.aiworkbench.service.conversation.infra.AiLongMemoryDO;
 import cn.aiworkbench.service.conversation.infra.AiMessageDO;
 import cn.aiworkbench.service.conversation.mapper.AiConversationMapper;
+import cn.aiworkbench.service.conversation.mapper.AiLongMemoryMapper;
 import cn.aiworkbench.service.conversation.mapper.AiMessageMapper;
 import cn.hutool.core.util.StrUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -27,8 +29,13 @@ import java.util.Map;
 @ConditionalOnProperty(name = "wb.mysql.enabled", havingValue = "true")
 public class ConversationMemoryService {
 
+    public static final String SCOPE_SYSTEM = "SYSTEM";
+    public static final String SCOPE_USER = "USER";
+    public static final String SYSTEM_OWNER = "global";
+
     private final AiConversationMapper conversationMapper;
     private final AiMessageMapper messageMapper;
+    private final AiLongMemoryMapper longMemoryMapper;
     private final ObjectMapper objectMapper;
 
     /**
@@ -360,6 +367,55 @@ public class ConversationMemoryService {
         out.put("conversation_id", conversationId);
         out.put("title", StrUtil.blankToDefault(conv.getTitle(), "新对话"));
         return out;
+    }
+
+    /**
+     * 读取某一主体的长期记忆，键值都是字符串。
+     *
+     * @param scope   SYSTEM 或 USER
+     * @param ownerId global 或 user_id
+     * @return 记忆；无行时为空 map
+     */
+    public Map<String, String> loadLongMemory(String scope, String ownerId) {
+        if (StrUtil.isBlank(scope) || StrUtil.isBlank(ownerId)) {
+            return Map.of();
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (AiLongMemoryDO row : longMemoryMapper.selectByOwner(scope, ownerId)) {
+            if (row == null || StrUtil.isBlank(row.getMemKey()) || row.getMemValue() == null) {
+                continue;
+            }
+            out.put(row.getMemKey(), row.getMemValue());
+        }
+        return out;
+    }
+
+    /**
+     * 把本轮说出的筛选偏好写入该运营的画像，只覆盖出现的键。
+     *
+     * @param userId 运营用户
+     * @param patch  键到值；值为空则跳过
+     */
+    public void upsertUserProfile(String userId, Map<String, ?> patch) {
+        if (StrUtil.isBlank(userId) || patch == null || patch.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, ?> entry : patch.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank() || entry.getValue() == null) {
+                continue;
+            }
+            String value = String.valueOf(entry.getValue()).trim();
+            if (value.isEmpty() || "null".equalsIgnoreCase(value)) {
+                continue;
+            }
+            AiLongMemoryDO row = new AiLongMemoryDO();
+            row.setScope(SCOPE_USER);
+            row.setOwnerId(userId);
+            row.setMemKey(entry.getKey().trim());
+            row.setMemValue(value);
+            row.setSource("utterance");
+            longMemoryMapper.upsert(row);
+        }
     }
 
     /**

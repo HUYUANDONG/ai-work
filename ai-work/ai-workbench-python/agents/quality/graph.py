@@ -13,12 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def _make_control(context: dict[str, Any], runtime: AppRuntime) -> TaskControl | None:
+    """只有领到租约的 Worker 才挂控制；对话里直接跑不心跳、不占任务。"""
     task_id = str(context.get("task_id") or "")
-    if not task_id:
+    lease = str(context.get("lease_token") or "")
+    if not task_id or not lease:
         return None
     return TaskControl(
         task_id=task_id,
-        lease_token=str(context.get("lease_token") or "dev-lease"),
+        lease_token=lease,
         runtime=runtime,
     )
 

@@ -1,13 +1,11 @@
-"""FastAPI lifespan：启动挂 Runtime，顺带拉起 Worker，关闭释放 DB。"""
+"""FastAPI lifespan：启动挂 Runtime，关闭时释放 DB。对话内直接做完分析，不拉起领任务 Worker。"""
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.worker import run_worker_loop
 from core.config import get_settings
 from db.session import close_db, init_db
 from harness.checkpoint import close_checkpointer, init_checkpointer
@@ -31,23 +29,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.checkpoint_database_url:
         init_db(settings)
     await init_checkpointer(settings)
-    from agents.explosion.lg_graph import get_explosion_app
     from agents.quality.lg_graph import get_quality_app
 
-    get_explosion_app()
     get_quality_app()
-
-    worker_task = asyncio.create_task(
-        run_worker_loop(runtime=app.state.runtime),
-        name="py-worker",
-    )
-    logger.info("background worker scheduled poll=%ss", settings.worker_poll_interval_seconds)
+    logger.info("chat runtime ready")
 
     try:
         yield
     finally:
-        worker_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await worker_task
         await close_checkpointer()
         await close_db()

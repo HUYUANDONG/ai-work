@@ -1,9 +1,8 @@
 """编排中枢：WorkbenchSupervisor + OpsSupervisor。"""
 
-from agents.supervisor.workbench import ExplosionSupervisor, Supervisor, WorkbenchSupervisor
+from agents.supervisor.workbench import Supervisor, WorkbenchSupervisor
 
 __all__ = [
-    "ExplosionSupervisor",
     "OpsSupervisor",
     "PHASE_AWAITING_ADVISE",
     "PHASE_AWAITING_COPY",
@@ -15,7 +14,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """延迟加载 OpsSupervisor，避免与 explosion 图循环导入。"""
+    """延迟加载 OpsSupervisor，避免与质检图循环导入。"""
     if name == "OpsSupervisor":
         from agents.supervisor.ops import OpsSupervisor
 

@@ -3,7 +3,6 @@
 
 职责：计时、可选超时、异常 → 软 ``AgentResult``。
 运输层重试/熔断已在 ``LlmClient`` / ``JavaClient``，此处不再叠。
-任务专家（EXPLOSION/QUALITY）走 ``TaskAgent`` + LangGraph，不继承本类。
 """
 
 from __future__ import annotations

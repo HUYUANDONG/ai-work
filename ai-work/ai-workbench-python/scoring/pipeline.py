@@ -14,6 +14,7 @@ from scoring.explosion import score_sku
 from scoring.math_utils import num
 from scoring.quality import check_sku
 from scoring.store_stats import build_store_stats
+from scoring.user_filters import row_passes_filters
 
 
 def filter_marketing_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -67,16 +68,18 @@ def rank_candidates(
     items: list[dict[str, Any]],
     *,
     top_n: int | None = None,
+    user_filters: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """
-    过滤 → 店铺统计 → 打分+挂标 → 按 explosion_score 排序截断。
+    过滤 → 店铺统计 → 打分+挂标 → 运营硬条件 → 按 explosion_score 排序截断。
 
     Args:
         items: 特征行（通常来自 features/query）。
         top_n: 返回条数；默认配置 DEFAULT_TOP_N，上限 MAX_TOP_N。
+        user_filters: LLM 抽出的下限（毛利/转化率/销售额/订单）。空则不过滤。
 
     Returns:
-        dict: candidates / store_stats / pool_size / scoring_version。
+        dict: candidates / store_stats / pool_size / scoring_version / user_filters。
     """
     n = top_n if top_n is not None else C.DEFAULT_TOP_N
     n = max(1, min(int(n), C.MAX_TOP_N))
@@ -122,8 +125,10 @@ def rank_candidates(
             }
         )
 
-    scored.sort(key=lambda x: x["explosion_score"], reverse=True)
-    top = scored[:n]
+    filters = dict(user_filters or {})
+    kept = [row for row in scored if row_passes_filters(row.get("metrics") or {}, filters)]
+    kept.sort(key=lambda x: x["explosion_score"], reverse=True)
+    top = kept[:n]
     for i, row in enumerate(top, start=1):
         row["rank"] = i
 
@@ -131,6 +136,8 @@ def rank_candidates(
         "scoring_version": C.SCORING_VERSION,
         "pool_size": len(pool),
         "scored_size": len(scored),
+        "filtered_out": len(scored) - len(kept),
+        "user_filters": filters,
         "top_n": n,
         "store_stats": store_stats,
         "candidates": top,

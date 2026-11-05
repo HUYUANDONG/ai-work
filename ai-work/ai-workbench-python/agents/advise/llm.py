@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from clients.llm_client import LlmClient
+from harness.memory.long_term import prompt_with_memory
 from harness.memory.slim import slim_candidates_for_llm
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ async def write_placement_advise(
     llm: LlmClient | None,
     goal_mode: str = "GMV",
     on_delta: DeltaFn | None = None,
+    memory_preface: str = "",
 ) -> dict[str, Any]:
     """
     用 LLM（或模板）生成投放建议正文。
@@ -110,7 +112,9 @@ async def write_placement_advise(
         try:
             chunks: list[str] = []
             async for delta in llm.chat_stream(
-                system=ADVISE_SYSTEM, user=user, json_mode=False
+                system=prompt_with_memory(ADVISE_SYSTEM, memory_preface),
+                user=user,
+                json_mode=False,
             ):
                 chunks.append(delta)
                 if on_delta is not None and delta:
@@ -119,7 +123,11 @@ async def write_placement_advise(
             if text:
                 return {"text": text, "source": "llm_stream"}
             # 空流再退非流式
-            text = await llm.chat(system=ADVISE_SYSTEM, user=user, json_mode=False)
+            text = await llm.chat(
+                system=prompt_with_memory(ADVISE_SYSTEM, memory_preface),
+                user=user,
+                json_mode=False,
+            )
             text = (text or "").strip()
             if text:
                 if on_delta is not None:

@@ -22,7 +22,8 @@ class RecommendAgent(BaseAgent):
     async def _execute(self, **kwargs: Any) -> AgentResult:
         items = list(kwargs.get("items") or [])
         top_n = int(kwargs.get("top_n") or 10)
-        ranked = rank_candidates(items, top_n=top_n)
+        user_filters = kwargs.get("user_filters") or {}
+        ranked = rank_candidates(items, top_n=top_n, user_filters=user_filters)
         candidates = list(ranked.get("candidates") or [])
         # 默认前 focus_slots 进槽，供建议/文案使用
         focus_slots = int(kwargs.get("focus_slots") or 5)
@@ -37,6 +38,8 @@ class RecommendAgent(BaseAgent):
                 "pool_size": ranked.get("pool_size"),
                 "scoring_version": ranked.get("scoring_version"),
                 "top_n": ranked.get("top_n"),
+                "user_filters": ranked.get("user_filters") or {},
+                "filtered_out": ranked.get("filtered_out") or 0,
             },
             source="scoring_rules",
         )

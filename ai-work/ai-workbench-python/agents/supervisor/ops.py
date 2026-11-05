@@ -19,10 +19,12 @@ from agents.copy.agent import CopyAgent
 from agents.data_task.agent import DataTaskAgent
 from agents.decision.agent import DecisionAgent
 from agents.inventory.agent import InventoryAgent
+from agents.quality.graph import run_quality
 from agents.recommend.agent import RecommendAgent
 from agents.supervisor.workbench import WorkbenchSupervisor
 from harness.runtime import AppRuntime
 from schemas.chat import ChatRequest, NeedTask
+from scoring.user_filters import describe_rank_filters, extract_rank_filters
 from tools.reports import get_conversation_reports
 
 logger = logging.getLogger(__name__)
@@ -47,12 +49,10 @@ class OpsSupervisor(WorkbenchSupervisor):
         self,
         *,
         llm: Any = None,
-        council_llm_enabled: bool = False,
         timeout: float | None = 30.0,
     ) -> None:
         super().__init__(
             llm=llm,
-            council_llm_enabled=council_llm_enabled,
             timeout=timeout,
         )
         self.register_agent(DecisionAgent(timeout=20.0))
@@ -68,9 +68,8 @@ class OpsSupervisor(WorkbenchSupervisor):
         cls,
         *,
         llm: Any = None,
-        council_llm_enabled: bool = False,
     ) -> "OpsSupervisor":
-        return cls(llm=llm, council_llm_enabled=council_llm_enabled)
+        return cls(llm=llm)
 
     async def handle_turn(
         self,
@@ -153,6 +152,7 @@ class OpsSupervisor(WorkbenchSupervisor):
             time_window_days=days,
         )
         items = list((features_res.data or {}).get("features", {}).get("items") or [])
+        user_filters = await extract_rank_filters(req.message, runtime.llm_client)
 
         # 推荐与库存并行：先推荐拿 sku，再拉库存策略后 inventory agent 解读
         rec = await self.run_agent(
@@ -160,6 +160,7 @@ class OpsSupervisor(WorkbenchSupervisor):
             items=items,
             top_n=top_n,
             focus_slots=focus_slots,
+            user_filters=user_filters,
         )
         candidates = list((rec.data or {}).get("candidates") or [])
         sku_ids = [str(c.get("sku_id")) for c in candidates if c.get("sku_id")]
@@ -187,7 +188,11 @@ class OpsSupervisor(WorkbenchSupervisor):
         candidates = list((exploded.data or {}).get("candidates") or candidates)
         analysis_text = str((exploded.data or {}).get("text") or "").strip()
 
-        reply = self._format_rec_inv_reply(candidates, inv_data)
+        reply = self._format_rec_inv_reply(
+            candidates,
+            inv_data,
+            filter_note=describe_rank_filters(user_filters),
+        )
         if analysis_text:
             reply = f"{reply}\n\n【爆品解读】\n{analysis_text}"
         reply = f"{reply}\n\n{ASK_ADVISE}"
@@ -198,6 +203,7 @@ class OpsSupervisor(WorkbenchSupervisor):
             "goal_mode": goal_mode,
             "time_window_days": days,
             "focus_slots": focus_slots,
+            "user_filters": user_filters,
             "user_id": req.user_id,
             "conversation_id": req.conversation_id,
             "analysis_text": analysis_text,
@@ -224,6 +230,8 @@ class OpsSupervisor(WorkbenchSupervisor):
                 "rec_count": len(candidates),
                 "inv_warnings": inv_data.get("warning_count"),
                 "scoring": rec.source,
+                "user_filters": user_filters,
+                "filtered_out": (rec.data or {}).get("filtered_out"),
                 "explosion_source": exploded.source,
             },
         )
@@ -319,9 +327,9 @@ class OpsSupervisor(WorkbenchSupervisor):
         intent: str,
         decision: dict[str, Any],
     ) -> dict[str, Any]:
-        """非营销主链：质检 NEED_TASK / 深挖 / 追问 / 能力 / 拒识。"""
+        """非营销主链：质检当场执行 / 深挖 / 追问 / 能力 / 拒识。"""
         if intent == "QUALITY":
-            return await self._quality_need_task(runtime, req, mem, decision=decision)
+            return await self._run_quality_inline(runtime, req, mem, decision=decision)
 
         if intent == "SKU_DEEP":
             skus = extract_sku_ids(req.message)
@@ -396,7 +404,7 @@ class OpsSupervisor(WorkbenchSupervisor):
             debug={"decision": decision},
         )
 
-    async def _quality_need_task(
+    async def _run_quality_inline(
         self,
         runtime: AppRuntime,
         req: ChatRequest,
@@ -404,7 +412,7 @@ class OpsSupervisor(WorkbenchSupervisor):
         *,
         decision: dict[str, Any],
     ) -> dict[str, Any]:
-        """质检仍走 Java Worker 长任务。"""
+        """质检在本轮对话里直接拉数、跑规则、写报告，不入队、不领任务。"""
         skus = extract_sku_ids(req.message)
         storewide = looks_like_storewide_quality(req.message)
         if not skus and "这批" in (req.message or ""):
@@ -444,22 +452,62 @@ class OpsSupervisor(WorkbenchSupervisor):
         mem.last_intent = "QUALITY"
         mem.last_task_input = dict(task_input)
         mem.ops_phase = PHASE_IDLE
+        result = await run_quality(
+            {
+                "task_id": f"chat-{req.conversation_id}",
+                "conversation_id": req.conversation_id,
+                "user_id": req.user_id,
+                "input": {
+                    **task_input,
+                    "graph_thread_id": f"quality-{req.conversation_id}",
+                },
+            },
+            runtime,
+        )
         return self._out(
-            "已识别为质检。Java 建任务后将拉取特征、跑规则并生成质检报告。",
+            self._format_quality_reply(result),
             intent="QUALITY",
             phase=PHASE_IDLE,
-            need_task=NeedTask(task_type="QUALITY", input=task_input),
-            debug={"decision": decision},
+            debug={"decision": decision, "quality_status": result.get("status")},
         )
+
+    @staticmethod
+    def _format_quality_reply(result: dict[str, Any]) -> str:
+        """把质检结果收成对话回复。"""
+        status = str(result.get("status") or "")
+        if status == "FAILED_NO_FEATURES":
+            return str(result.get("message") or "没有拉到可质检的商品。")
+        summary = str(result.get("summary") or result.get("message") or "质检完成。")
+        lines = [summary]
+        items = [row for row in (result.get("items") or []) if isinstance(row, dict)]
+        if items:
+            lines.append("")
+            for row in items[:8]:
+                lines.append(
+                    f"- {row.get('sku_id')} {row.get('title') or ''} "
+                    f"风险={row.get('risk_level')} 质检分={row.get('quality_score')}"
+                )
+        high = result.get("high_risk_count")
+        if high is not None:
+            lines.append(f"\n高风险 {high} 个，共 {result.get('sku_count') or len(items)} 个。")
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _format_rec_inv_reply(
         candidates: list[dict[str, Any]],
         inv_data: dict[str, Any],
+        *,
+        filter_note: str = "",
     ) -> str:
+        note = (filter_note or "").strip()
         if not candidates:
-            return "这批窗口里没筛出足够营销信号的在售商品，可换时间窗或类目再试。"
+            base = "这批窗口里没筛出足够营销信号的在售商品，可换时间窗或类目再试。"
+            if note:
+                base = "按这些条件没有商品同时达标。可放宽利润/转化率后再筛。"
+            return f"{note}\n{base}".strip() if note else base
         lines = ["本轮爆品榜（代码评分，非 LLM 口算）："]
+        if note:
+            lines.insert(0, note)
         for c in candidates[:10]:
             slot = "★" if c.get("in_focus_slot") else "·"
             lines.append(
@@ -481,6 +529,7 @@ class OpsSupervisor(WorkbenchSupervisor):
         clarify: bool = False,
         need_task: NeedTask | None = None,
         debug: dict[str, Any] | None = None,
+        profile_patch: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         return {
             "reply": reply,
@@ -489,4 +538,5 @@ class OpsSupervisor(WorkbenchSupervisor):
             "clarify_pending": clarify,
             "need_task": need_task.model_dump() if need_task is not None else None,
             "debug": debug or {},
+            "profile_patch": profile_patch,
         }

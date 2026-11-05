@@ -43,6 +43,8 @@ class ChatRequest(BaseModel):
     queue_message: bool = False
     working_summary: str | None = None
     episodes: list[dict[str, Any]] | None = None
+    system_memory: dict[str, Any] = Field(default_factory=dict)
+    user_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class NeedTask(BaseModel):
@@ -65,6 +67,7 @@ class ChatResponse(BaseModel):
         ui_hints: 前端提示（如下载、思考流、取消按钮）。
         working_summary: 深度摘要后回写 Java；未压缩时可空。
         summary_through_message_id: 摘要覆盖到的最大消息 id（含）。
+        profile_patch: 本轮要写入该运营画像的筛选偏好；空则不改。
     """
 
     intent: Intent
@@ -75,4 +78,5 @@ class ChatResponse(BaseModel):
     ui_hints: dict[str, Any] | None = None
     working_summary: str | None = None
     summary_through_message_id: int | None = None
+    profile_patch: dict[str, Any] | None = None
 

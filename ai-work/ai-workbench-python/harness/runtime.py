@@ -65,10 +65,7 @@ class AppRuntime:
             context_window=cfg.llm_context_window,
             reserve_output=cfg.llm_reserve_output,
         )
-        supervisor = OpsSupervisor.create(
-            llm=llm,
-            council_llm_enabled=bool(getattr(cfg, "council_llm_enabled", False)),
-        )
+        supervisor = OpsSupervisor.create(llm=llm)
         return cls(
             settings=cfg,
             java_client=JavaClient(

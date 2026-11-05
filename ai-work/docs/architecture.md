@@ -23,9 +23,8 @@ ai-workbench-service
   └── （Python 使用）独立 PostgreSQL Checkpoint（含 Explosion plan 状态）
 ```
 
-职责：Java 是 Workbench；Python 是一套 Harness。  
-V1：Chat 手写入口 + `TaskAgent` 注册表；**Explosion 内**用 `ExplosionSupervisor` 编排本仓 Signal/Risk/Strategy（学参考项目编排思路，不搬其业务 Agent）。  
-**无**跨 `task_type` 自动派活。详见 [agents/harness.md](agents/harness.md)、[agents/explosion-agent.md](agents/explosion-agent.md)。
+职责：Java 是 Workbench；Python 是对话运行时。  
+对话入口是 `OpsSupervisor.handle_turn`：营销在同一轮里打分、解读、建议、文案；质检也在同一轮里跑 LangGraph。详见 [agents/harness.md](agents/harness.md)、[agents/explosion-agent.md](agents/explosion-agent.md)。
 
 Python 仓目录分层（Controller / Service 心智）见 [python-package-layout.md](python-package-layout.md)。
 

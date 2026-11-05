@@ -29,6 +29,7 @@ class AdviseAgent(BaseAgent):
             llm=kwargs.get("llm") or self.llm,
             goal_mode=str(kwargs.get("goal_mode") or "GMV"),
             on_delta=kwargs.get("on_delta"),
+            memory_preface=str(kwargs.get("memory_preface") or ""),
         )
         text = str(written.get("text") or "").strip()
         return AgentResult(

@@ -1,4 +1,4 @@
-"""BaseAgent 与 TaskAgent 注册表。"""
+"""BaseAgent 超时与爆品叶子兜底。"""
 
 from __future__ import annotations
 
@@ -8,12 +8,6 @@ from typing import Any
 
 from agents.base import BaseAgent
 from agents.explosion.agent import ExplosionAgent
-from agents.task_agent import (
-    CallableTaskAgent,
-    get_task_agent,
-    register_task_agent,
-    supported_task_types,
-)
 from schemas.agent import AgentResult
 
 
@@ -99,23 +93,6 @@ class ExplosionAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(r.success)
         self.assertEqual(r.source, "template")
         self.assertTrue(r.data["candidates"][0]["in_focus_slot"])
-
-
-class TaskRegistryTest(unittest.TestCase):
-    def test_builtins_registered(self) -> None:
-        known = supported_task_types()
-        self.assertIn("EXPLOSION", known)
-        self.assertIn("QUALITY", known)
-
-    def test_custom_registration(self) -> None:
-        async def _run(ctx, runtime):  # noqa: ANN001
-            return {"ok": True}
-
-        register_task_agent(CallableTaskAgent("CUSTOM_X", _run))
-        self.assertIsNotNone(get_task_agent("CUSTOM_X"))
-
-    def test_route_unknown(self) -> None:
-        self.assertIsNone(get_task_agent("NO_SUCH"))
 
 
 if __name__ == "__main__":

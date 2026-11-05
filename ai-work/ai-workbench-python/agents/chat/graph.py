@@ -1,8 +1,7 @@
 """
-对话入口：闸门（排队/控制）+ 记忆补水 → OpsSupervisor.handle_turn。
+对话入口：记忆补水后交给 OpsSupervisor.handle_turn。
 
-营销主链（爆品→库存→问建议→LLM建议→问文案→合规文案）由 OpsSupervisor 编排；
-质检仍回 NEED_TASK 给 Java Worker。
+营销主链和质检都在这一轮对话里做完。
 """
 
 from __future__ import annotations
@@ -20,43 +19,8 @@ def _ops_supervisor(runtime: AppRuntime) -> OpsSupervisor:
     """进程内复用 OpsSupervisor（含 Workbench 全部叶子）。"""
     if isinstance(runtime.supervisor, OpsSupervisor):
         return runtime.supervisor
-    runtime.supervisor = OpsSupervisor.create(
-        llm=runtime.llm_client,
-        council_llm_enabled=bool(
-            getattr(runtime.settings, "council_llm_enabled", False)
-        ),
-    )
+    runtime.supervisor = OpsSupervisor.create(llm=runtime.llm_client)
     return runtime.supervisor
-
-
-def _is_control_message(message: str) -> bool:
-    """是否像「取消/暂停/继续」控制指令。"""
-    text = (message or "").strip().lower()
-    return any(
-        k in text
-        for k in (
-            "取消",
-            "停止",
-            "暂停",
-            "继续",
-            "恢复",
-            "cancel",
-            "pause",
-            "resume",
-            "continue",
-            "别跑了",
-        )
-    )
-
-
-def _control_action(message: str) -> str:
-    """从话术解析 pause|cancel|resume。"""
-    text = (message or "").strip().lower()
-    if any(k in text for k in ("暂停", "pause")):
-        return "pause"
-    if any(k in text for k in ("继续", "恢复", "resume", "continue")):
-        return "resume"
-    return "cancel"
 
 
 def _with_debug(resp: ChatResponse, intent_meta: dict[str, Any]) -> dict[str, Any]:
@@ -173,84 +137,6 @@ async def run_chat(
     """
     req = payload if isinstance(payload, ChatRequest) else ChatRequest.model_validate(payload)
 
-    # 长任务进行中：取消/暂停提示 Java 写标志；「再试一次」开新任务；其它追问才入队
-    if (req.queue_message or req.active_task_id) and not intent_mod.is_retry_message(
-        req.message
-    ):
-        if _is_control_message(req.message) and req.active_task_id:
-            action = _control_action(req.message)
-            try:
-                await runtime.java_client.request_task_control(
-                    req.active_task_id,
-                    action=action,
-                    reason=req.message.strip()[:80],
-                )
-            except Exception:
-                pass
-            if action == "pause":
-                reply = "已请求暂停，将在当前思考步骤结束后停下。"
-            elif action == "resume":
-                reply = "已请求继续：将从上次暂停的节点断点续跑。"
-            else:
-                reply = "已请求取消，将尽快停止分析。"
-            return _with_debug(
-                ChatResponse(
-                    intent="QUEUED",
-                    reply=reply,
-                    need_task=None,
-                    clarify_pending=False,
-                    queue_ack={
-                        "queued": False,
-                        "control": action,
-                        "active_task_id": req.active_task_id,
-                    },
-                    ui_hints={
-                        "show_thinking": True,
-                        "allow_pause": True,
-                        "allow_cancel": True,
-                        "allow_resume": True,
-                        "active_task_id": req.active_task_id,
-                        "control_requested": action,
-                    },
-                ),
-                {"source": "control_gate", "confidence": 1.0},
-            )
-
-        depth = 0
-        if runtime.java_client.mock_features:
-            depth = runtime.java_client.mock_enqueue_user_message(
-                req.conversation_id,
-                {
-                    "user_id": req.user_id,
-                    "message": req.message,
-                    "active_task_id": req.active_task_id,
-                },
-            )
-        return _with_debug(
-            ChatResponse(
-                intent="QUEUED",
-                reply=(
-                    "上一轮分析还在跑，这句先记下了。"
-                    f"{'队列约 ' + str(depth) + ' 条。' if depth else ''}"
-                    "要重跑请直接说「再试一次」；要停掉请说「取消」。"
-                ),
-                need_task=None,
-                clarify_pending=False,
-                queue_ack={
-                    "queued": True,
-                    "active_task_id": req.active_task_id,
-                    "queue_depth": depth or None,
-                },
-                ui_hints={
-                    "show_thinking": True,
-                    "allow_pause": True,
-                    "allow_cancel": True,
-                    "active_task_id": req.active_task_id,
-                },
-            ),
-            {"source": "queue_gate", "confidence": 1.0},
-        )
-
     mem = runtime.memory_store.get(req.conversation_id)
     mem.last_summarize_meta = await _hydrate_session_memory(mem, req, runtime)
 
@@ -301,6 +187,7 @@ async def run_chat(
             reply=reply,
             need_task=need_task,
             clarify_pending=bool(result.get("clarify_pending")),
+            profile_patch=result.get("profile_patch") or None,
         ),
         intent_meta,
     )

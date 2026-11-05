@@ -1,8 +1,5 @@
-"""
-爆品作战专家：代码打分 + LangGraph 会签修订编排。
-"""
+"""爆品叶子：规则榜之后做解读和有限进槽，不改 explosion_score。"""
 
-from agents.explosion.graph import run_explosion
+from agents.explosion.agent import ExplosionAgent
 
-__all__ = ["run_explosion"]
-
+__all__ = ["ExplosionAgent"]
